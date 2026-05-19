@@ -68,7 +68,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
     {
         let pct = (*count as f64) / (max as f64);
         let color = color_fn(theme);
-        let (fill, empty) = super::braille::bar_pair(pct, bar_w);
+        let filled = (pct * bar_w as f64).round() as usize;
+        let fill: String = "▰".repeat(filled);
+        let empty: String = "▱".repeat(bar_w.saturating_sub(filled));
         let line = Line::from(vec![
             Span::styled(
                 format!("{:<width$.width$}", label, width = label_w as usize),

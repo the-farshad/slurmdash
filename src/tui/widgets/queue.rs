@@ -61,7 +61,9 @@ fn bar_line(
 
     let reserved = 10 + 1 + 6 + 1;
     let bar_w = area.width.saturating_sub(reserved) as usize;
-    let (fill, empty) = super::braille::bar_pair(pct, bar_w);
+    let filled = (pct * bar_w as f64).round() as usize;
+    let fill: String = "▰".repeat(filled);
+    let empty: String = "▱".repeat(bar_w.saturating_sub(filled));
 
     let line = Line::from(vec![
         Span::styled(format!("{state_label:<10}"), Style::default().fg(color)),

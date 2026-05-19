@@ -46,11 +46,7 @@ pub fn render(
             theme.fg,
         ),
         Chip::new("GPUs", format!("{}", total_gpus_alloc), theme.action_normal),
-        Chip::new(
-            "Σ GPU·JOB",
-            stats.gpu_jobs.to_string(),
-            theme.action_normal,
-        ),
+        Chip::new("Σ GPU·JOB", stats.gpu_jobs.to_string(), theme.action_normal),
         Chip::new("MEAN WAIT", fmt_dur(stats.wait_mean), theme.action_warning),
     ];
 
