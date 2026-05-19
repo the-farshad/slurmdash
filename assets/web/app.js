@@ -1,7 +1,6 @@
-// slurmdash web — minimal vanilla JS dashboard.
-// Polls /api/dashboard every REFRESH_MS, renders the four panels, and
-// proxies destructive actions back through /api/jobs/:id/:action with a
-// confirm modal.
+// slurmdash web — richer dashboard with KPI strip, sparklines,
+// state donut, wait histogram, and a filterable / sortable jobs
+// table. Vanilla JS + inline SVG; no external dependencies.
 
 const REFRESH_MS = 5000;
 
@@ -9,7 +8,6 @@ const params = new URLSearchParams(location.search);
 const token = params.get('token') || readCookie('slurmdash_token');
 if (token) {
   document.cookie = `slurmdash_token=${token}; SameSite=Strict; path=/`;
-  // Strip the token from the URL so it isn't pasted by accident.
   if (params.has('token')) {
     params.delete('token');
     const url = location.pathname + (params.toString() ? '?' + params.toString() : '');
@@ -31,7 +29,17 @@ async function fetchJson(path, init = {}) {
   return r.json();
 }
 
-// ---- Rendering helpers -----------------------------------------------
+// ---- Persistent state ------------------------------------------------
+
+const ui = {
+  sortKey: 'state',
+  sortDesc: false,
+  filterText: '',
+  jobs: [],     // last fetched
+  readonly: false,
+};
+
+// ---- Small helpers ---------------------------------------------------
 
 function gradeClass(pct) {
   if (pct >= 95) return 'critical';
@@ -40,20 +48,26 @@ function gradeClass(pct) {
   return 'low';
 }
 
-function barRow(label, pct, suffix) {
-  const cls = gradeClass(pct);
-  const w = Math.max(0, Math.min(100, pct));
-  return `<div class="bar-row">
-    <div class="label">${label}</div>
-    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${w}%"></div></div>
-    <div class="suffix">${suffix}</div>
-  </div>`;
+function gradeColor(pct) {
+  if (pct >= 95) return 'var(--critical)';
+  if (pct >= 80) return 'var(--high)';
+  if (pct >= 50) return 'var(--med)';
+  return 'var(--low)';
 }
 
 function humanMb(mb) {
+  if (mb == null) return '—';
   if (mb >= 1024 * 1024) return (mb / 1024 / 1024).toFixed(1) + 'TB';
   if (mb >= 1024) return (mb / 1024).toFixed(1) + 'GB';
   return mb + 'MB';
+}
+
+function shortDur(s) {
+  if (s == null) return '—';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h`;
+  return `${Math.floor(s/86400)}d`;
 }
 
 function hms(secs) {
@@ -74,7 +88,279 @@ function aiotPctU64(a) {
   return Number((BigInt(a.allocated) * 100n / (BigInt(a.total) || 1n)));
 }
 
-// ---- Panels -----------------------------------------------------------
+function stateShort(s) {
+  if (typeof s === 'string') return s;
+  return Object.keys(s)[0] ? s[Object.keys(s)[0]] || Object.keys(s)[0] : 'UNK';
+}
+
+function escape(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+// Parse a GRES string like "gpu:a100:2" → 2; "gpu:4" → 4; "" → 0.
+function gpuCount(gres) {
+  if (!gres) return 0;
+  let total = 0;
+  for (const t of gres.split(',')) {
+    const tok = t.trim();
+    if (!tok.startsWith('gpu')) continue;
+    const parts = tok.split(':');
+    let n;
+    if (parts.length === 1) n = 1;
+    else if (parts.length === 2) n = parseInt(parts[1], 10);
+    else n = parseInt((parts[2] || '').split('(')[0], 10);
+    if (Number.isFinite(n)) total += n;
+  }
+  return total;
+}
+
+// Wait time helper: matches Job::wait_seconds() in slurm/model.rs.
+function waitSeconds(j) {
+  if (!j.submit_time) return null;
+  const submit = new Date(j.submit_time).getTime() / 1000;
+  const st = stateShort(j.state);
+  if (st === 'R') {
+    if (!j.start_time) return null;
+    const start = new Date(j.start_time).getTime() / 1000;
+    return Math.max(0, start - submit);
+  }
+  if (st === 'PD') {
+    return Math.max(0, Date.now() / 1000 - submit);
+  }
+  return null;
+}
+
+// ---- KPI strip -------------------------------------------------------
+
+function renderKpis(snap) {
+  const jobs = snap.jobs;
+  let running = 0, pending = 0, held = 0, failed = 0;
+  let waitSum = 0, waitN = 0, gpuJobs = 0;
+  for (const j of jobs) {
+    const st = stateShort(j.state);
+    if (st === 'R') running++;
+    else if (st === 'PD') pending++;
+    else if (st === 'H') held++;
+    else if (st === 'F' || st === 'TO' || st === 'NF' || st === 'BF' || st === 'DL' || st === 'OOM') failed++;
+    const g = gpuCount(j.gres);
+    if (g > 0) gpuJobs++;
+    const w = waitSeconds(j);
+    if (w != null) { waitSum += w; waitN++; }
+  }
+  const r = snap.resources;
+  document.getElementById('kpi-jobs').textContent = jobs.length;
+  document.getElementById('kpi-running').textContent = running;
+  document.getElementById('kpi-pending').textContent = pending;
+  document.getElementById('kpi-held').textContent = held;
+  document.getElementById('kpi-failed').textContent = failed;
+  document.getElementById('kpi-nodes').textContent = `${r.nodes.allocated}/${r.nodes.total}`;
+  document.getElementById('kpi-gpus').textContent = r.gpus?.allocated ?? 0;
+  document.getElementById('kpi-gpu-jobs').textContent = gpuJobs;
+  document.getElementById('kpi-wait').textContent = waitN > 0 ? shortDur(Math.round(waitSum / waitN)) : '—';
+}
+
+// ---- Sparkline trend charts -----------------------------------------
+
+function sparkline(values, color, opts = {}) {
+  const w = opts.width || 200;
+  const h = opts.height || 56;
+  const max = opts.max ?? 100;
+  if (!values || values.length < 2) {
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <text x="${w/2}" y="${h/2}" text-anchor="middle" fill="var(--muted)" font-size="10">collecting…</text>
+    </svg>`;
+  }
+  const n = values.length;
+  const stepX = w / Math.max(1, n - 1);
+  const m = Math.max(max, 1);
+  const pts = values.map((v, i) => `${(i*stepX).toFixed(1)},${(h - (Math.max(0, Math.min(m, v))/m)*h).toFixed(1)}`).join(' ');
+  // Area fill under the line.
+  const areaPts = `0,${h} ${pts} ${w},${h}`;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polygon points="${areaPts}" fill="${color}" fill-opacity="0.15"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function stackedSparkline(seriesA, seriesB, colorA, colorB, opts = {}) {
+  // Stacked area: seriesA on bottom, seriesA+seriesB on top. Used for
+  // queue depth (running stacked under pending).
+  const w = opts.width || 200;
+  const h = opts.height || 56;
+  if (!seriesA || seriesA.length < 2) {
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <text x="${w/2}" y="${h/2}" text-anchor="middle" fill="var(--muted)" font-size="10">collecting…</text>
+    </svg>`;
+  }
+  const n = seriesA.length;
+  let m = 1;
+  for (let i = 0; i < n; i++) m = Math.max(m, seriesA[i] + (seriesB[i] || 0));
+  const stepX = w / Math.max(1, n - 1);
+  const ya = seriesA.map((v, i) => `${(i*stepX).toFixed(1)},${(h - (v/m)*h).toFixed(1)}`);
+  const yb = seriesA.map((v, i) => `${(i*stepX).toFixed(1)},${(h - ((v + (seriesB[i]||0))/m)*h).toFixed(1)}`);
+  const bottom = `0,${h} ${ya.join(' ')} ${w},${h}`;
+  const between = `${ya.join(' ')} ${[...yb].reverse().join(' ')}`;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polygon points="${bottom}" fill="${colorA}" fill-opacity="0.45"/>
+    <polygon points="${between}" fill="${colorB}" fill-opacity="0.35"/>
+    <polyline points="${yb.join(' ')}" fill="none" stroke="${colorB}" stroke-width="1.2"/>
+    <polyline points="${ya.join(' ')}" fill="none" stroke="${colorA}" stroke-width="1.5"/>
+  </svg>`;
+}
+
+function renderTrends(history) {
+  const pts = history?.points || [];
+  const cpu = pts.map(p => p.cpu_pct);
+  const gpu = pts.map(p => p.gpu_pct);
+  const mem = pts.map(p => p.mem_pct);
+  const run = pts.map(p => p.n_running);
+  const pend = pts.map(p => p.n_pending);
+
+  const last = pts.length ? pts[pts.length - 1] : null;
+  document.getElementById('trend-cpu-now').textContent = last ? Math.round(last.cpu_pct) + '%' : '—';
+  document.getElementById('trend-gpu-now').textContent = last ? Math.round(last.gpu_pct) + '%' : '—';
+  document.getElementById('trend-mem-now').textContent = last ? Math.round(last.mem_pct) + '%' : '—';
+  document.getElementById('trend-queue-now').textContent = last ? `${last.n_running}R / ${last.n_pending}PD` : '—';
+
+  const colCpu = last ? gradeColor(last.cpu_pct) : 'var(--low)';
+  const colGpu = last ? gradeColor(last.gpu_pct) : 'var(--low)';
+  const colMem = last ? gradeColor(last.mem_pct) : 'var(--low)';
+  document.getElementById('trend-cpu').innerHTML = sparkline(cpu, colCpu);
+  document.getElementById('trend-gpu').innerHTML = sparkline(gpu, colGpu);
+  document.getElementById('trend-mem').innerHTML = sparkline(mem, colMem);
+  document.getElementById('trend-queue').innerHTML = stackedSparkline(run, pend, 'var(--running)', 'var(--pending)');
+}
+
+// ---- State donut ----------------------------------------------------
+
+const STATE_COLORS = {
+  R:  'var(--running)',
+  PD: 'var(--pending)',
+  CG: 'var(--completing)',
+  CD: 'var(--completed)',
+  F:  'var(--failed)',
+  TO: 'var(--failed)',
+  NF: 'var(--failed)',
+  BF: 'var(--failed)',
+  DL: 'var(--failed)',
+  OOM:'var(--failed)',
+  CA: 'var(--cancelled)',
+  H:  'var(--held)',
+  S:  'var(--suspended)',
+};
+
+function renderStateDonut(jobs) {
+  const counts = {};
+  for (const j of jobs) {
+    const k = stateShort(j.state);
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const segs = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => ({ key: k, value: v, color: STATE_COLORS[k] || 'var(--muted)' }));
+
+  const total = segs.reduce((a, s) => a + s.value, 0);
+  const W = 160;
+  const R = 60;
+  const C = 2 * Math.PI * R;
+  const cx = W/2, cy = W/2;
+
+  let cumulative = 0;
+  const arcs = segs.map(s => {
+    const len = (s.value / Math.max(1, total)) * C;
+    const offset = C * 0.25 - cumulative;  // start at top
+    cumulative += len;
+    return `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none"
+      stroke="${s.color}" stroke-width="22"
+      stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}"
+      stroke-dashoffset="${offset.toFixed(2)}"/>`;
+  }).join('');
+
+  document.getElementById('state-donut').innerHTML = `
+    <svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}">
+      ${arcs}
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="var(--fg)" font-size="20" font-weight="700">${total}</text>
+      <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="var(--muted)" font-size="10">jobs</text>
+    </svg>`;
+
+  document.getElementById('state-legend').innerHTML = segs.map(s => `
+    <div><span class="sw" style="background:${s.color}"></span>${s.key}<span class="cnt">${s.value}</span></div>
+  `).join('') || '<div class="muted">no jobs</div>';
+}
+
+// ---- Wait histogram -------------------------------------------------
+
+const WAIT_BUCKETS = [
+  { label: '< 1m',    cls: 'b0', max:    60 },
+  { label: '1–5m',    cls: 'b1', max:   300 },
+  { label: '5–30m',   cls: 'b2', max:  1800 },
+  { label: '30m–2h',  cls: 'b3', max:  7200 },
+  { label: '2–12h',   cls: 'b4', max: 43200 },
+  { label: '> 12h',   cls: 'b5', max: Infinity },
+];
+
+function renderWaitHist(jobs) {
+  const counts = WAIT_BUCKETS.map(() => 0);
+  for (const j of jobs) {
+    const w = waitSeconds(j);
+    if (w == null) continue;
+    for (let i = 0; i < WAIT_BUCKETS.length; i++) {
+      if (w < WAIT_BUCKETS[i].max) { counts[i]++; break; }
+    }
+  }
+  const max = Math.max(1, ...counts);
+  document.getElementById('wait-hist').innerHTML = WAIT_BUCKETS.map((b, i) => {
+    const pct = (counts[i] / max) * 100;
+    return `<div class="hist-row">
+      <div class="label">${b.label}</div>
+      <div class="hist-bar"><div class="hist-fill ${b.cls}" style="width:${pct}%"></div></div>
+      <div class="count">${counts[i]}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---- Top users ------------------------------------------------------
+
+function renderTopUsers(jobs) {
+  const byUser = {};
+  for (const j of jobs) {
+    if (!byUser[j.user]) byUser[j.user] = { total: 0, R: 0, PD: 0, F: 0 };
+    byUser[j.user].total++;
+    const st = stateShort(j.state);
+    if (st === 'R') byUser[j.user].R++;
+    else if (st === 'PD') byUser[j.user].PD++;
+    else if (st === 'F' || st === 'TO' || st === 'NF') byUser[j.user].F++;
+  }
+  const entries = Object.entries(byUser).sort((a, b) => b[1].total - a[1].total).slice(0, 10);
+  const max = Math.max(1, ...entries.map(e => e[1].total));
+  const root = document.getElementById('top-users');
+  if (!entries.length) {
+    root.innerHTML = '<div class="muted">no jobs</div>';
+    return;
+  }
+  root.innerHTML = entries.map(([user, s]) => {
+    const pct = (s.total / max) * 100;
+    return `<div class="tu-row">
+      <div class="label">${escape(user)}</div>
+      <div class="tu-bar"><div class="tu-fill" style="width:${pct}%"></div></div>
+      <div class="count">${s.total}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---- Resources + ending soon (existing) -----------------------------
+
+function barRow(label, pct, suffix) {
+  const cls = gradeClass(pct);
+  const w = Math.max(0, Math.min(100, pct));
+  return `<div class="bar-row">
+    <div class="label">${label}</div>
+    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${w}%"></div></div>
+    <div class="suffix">${suffix}</div>
+  </div>`;
+}
 
 function renderResources(r) {
   const root = document.getElementById('resources');
@@ -93,29 +379,6 @@ function renderResources(r) {
     <span>total ${r.nodes.total}</span>
   </div>`);
   root.innerHTML = parts.join('');
-}
-
-function renderQueue(jobs) {
-  const root = document.getElementById('queue');
-  const counts = {};
-  for (const j of jobs) {
-    const k = stateShort(j.state);
-    counts[k] = (counts[k] || 0) + 1;
-  }
-  const max = Math.max(1, ...Object.values(counts));
-  const priority = ['R','PD','CG','S','H'];
-  const ordered = priority.filter(p => counts[p]);
-  for (const k of Object.keys(counts).sort()) {
-    if (!ordered.includes(k)) ordered.push(k);
-  }
-  root.innerHTML = ordered.map(k => {
-    const w = (counts[k] / max) * 100;
-    return `<div class="q-row">
-      <span class="q-state ${k}">${k}</span>
-      <span class="q-fill ${k}" style="width:${w}%"></span>
-      <span class="count">${counts[k]}</span>
-    </div>`;
-  }).join('') || '<div class="muted">no jobs</div>';
 }
 
 function renderEnding(jobs) {
@@ -138,6 +401,17 @@ function renderEnding(jobs) {
       <span class="remaining ${cls}">-${hms(remaining)}</span>
     </div>`;
   }).join('');
+}
+
+// ---- Partitions -----------------------------------------------------
+
+function seg(label, pct) {
+  const cls = gradeClass(pct);
+  return `<div class="seg">
+    <span class="seg-label">${label}</span>
+    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${Math.max(0,Math.min(100,pct))}%"></div></div>
+    <span class="seg-pct">${Math.round(pct)}%</span>
+  </div>`;
 }
 
 function renderPartitions(parts) {
@@ -163,20 +437,142 @@ function renderPartitions(parts) {
   }).join('');
 }
 
-function seg(label, pct) {
-  const cls = gradeClass(pct);
-  return `<div class="seg">
-    <span class="seg-label">${label}</span>
-    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${Math.max(0,Math.min(100,pct))}%"></div></div>
-    <span class="seg-pct">${Math.round(pct)}%</span>
-  </div>`;
+// ---- Filter (mirrors the TUI's parse_filter) ------------------------
+
+function parseFilter(s) {
+  const p = {
+    free: [], user: [], partition: [], state: [], name: [], jobId: [], reason: [],
+    gpuOnly: false, cpuOnly: false, memMin: null, memMax: null,
+  };
+  for (const tok of s.split(/\s+/).filter(Boolean)) {
+    const low = tok.toLowerCase();
+    if (low === 'gpu') { p.gpuOnly = true; continue; }
+    if (low === 'cpu') { p.cpuOnly = true; continue; }
+    const i = tok.indexOf(':');
+    if (i > 0) {
+      const field = tok.slice(0, i).toLowerCase();
+      const value = tok.slice(i + 1);
+      if (!value) continue;
+      switch (field) {
+        case 'user': case 'u': p.user.push(value); continue;
+        case 'partition': case 'part': case 'p': p.partition.push(value); continue;
+        case 'state': case 'st': case 's': p.state.push(value.toUpperCase()); continue;
+        case 'name': case 'n': p.name.push(value); continue;
+        case 'id': case 'jobid': case 'job': p.jobId.push(value); continue;
+        case 'reason': case 'r': p.reason.push(value); continue;
+        case 'gpu':
+          if (['none', 'no', '0'].includes(value.toLowerCase())) p.cpuOnly = true;
+          else p.gpuOnly = true;
+          continue;
+        case 'mem': case 'm': {
+          let cmp = '>', num = value;
+          if (value.startsWith('>=')) { cmp = '>'; num = value.slice(2); }
+          else if (value.startsWith('<=')) { cmp = '<'; num = value.slice(2); }
+          else if (value.startsWith('>'))  { cmp = '>'; num = value.slice(1); }
+          else if (value.startsWith('<'))  { cmp = '<'; num = value.slice(1); }
+          else if (value.startsWith('='))  { cmp = '='; num = value.slice(1); }
+          const mb = parseMem(num);
+          if (mb != null) {
+            if (cmp === '>') p.memMin = mb;
+            else if (cmp === '<') p.memMax = mb;
+            else { p.memMin = mb; p.memMax = mb; }
+          }
+          continue;
+        }
+        default: p.free.push(tok);
+      }
+    } else {
+      p.free.push(tok);
+    }
+  }
+  return p;
 }
 
-function renderJobs(jobs, readonly) {
+function parseMem(raw) {
+  const m = raw.match(/^([\d.]+)\s*([kmgtKMGT]?)[nc]?$/);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  if (!Number.isFinite(num)) return null;
+  const u = m[2].toUpperCase();
+  switch (u) {
+    case '': case 'M': return Math.round(num);
+    case 'K': return Math.round(num / 1024);
+    case 'G': return Math.round(num * 1024);
+    case 'T': return Math.round(num * 1024 * 1024);
+    default: return null;
+  }
+}
+
+function matchesFilter(j, p) {
+  const st = stateShort(j.state);
+  const gpus = gpuCount(j.gres);
+  if (p.gpuOnly && gpus === 0) return false;
+  if (p.cpuOnly && gpus > 0) return false;
+  if (p.memMin != null && (j.min_mem_mb == null || j.min_mem_mb < p.memMin)) return false;
+  if (p.memMax != null && (j.min_mem_mb == null || j.min_mem_mb > p.memMax)) return false;
+  const lc = s => String(s ?? '').toLowerCase();
+  for (const q of p.free) {
+    const ql = q.toLowerCase();
+    if (!(lc(j.job_id).includes(ql) || lc(j.name).includes(ql) ||
+          lc(j.user).includes(ql) || lc(j.partition).includes(ql) ||
+          lc(j.reason_or_nodelist).includes(ql))) return false;
+  }
+  for (const q of p.user) if (!lc(j.user).includes(q.toLowerCase())) return false;
+  for (const q of p.partition) if (!lc(j.partition).includes(q.toLowerCase())) return false;
+  for (const q of p.name) if (!lc(j.name).includes(q.toLowerCase())) return false;
+  for (const q of p.jobId) if (!lc(j.job_id).includes(q.toLowerCase())) return false;
+  for (const q of p.reason) if (!lc(j.reason_or_nodelist).includes(q.toLowerCase())) return false;
+  for (const q of p.state) {
+    if (st.toUpperCase() !== q && !String(j.state).toUpperCase().includes(q)) return false;
+  }
+  return true;
+}
+
+// ---- Jobs table -----------------------------------------------------
+
+function compare(a, b, key) {
+  switch (key) {
+    case 'job_id': {
+      const ai = parseInt(a.job_id, 10), bi = parseInt(b.job_id, 10);
+      if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
+      return String(a.job_id).localeCompare(String(b.job_id));
+    }
+    case 'partition': return a.partition.localeCompare(b.partition);
+    case 'name':      return a.name.localeCompare(b.name);
+    case 'user':      return a.user.localeCompare(b.user);
+    case 'state':     return stateShort(a.state).localeCompare(stateShort(b.state));
+    case 'elapsed_seconds': return (a.elapsed_seconds || 0) - (b.elapsed_seconds || 0);
+    case 'time_limit_seconds': return (a.time_limit_seconds || 0) - (b.time_limit_seconds || 0);
+    case 'wait':      return (waitSeconds(a) || 0) - (waitSeconds(b) || 0);
+    case 'gpus':      return gpuCount(a.gres) - gpuCount(b.gres);
+    case 'min_mem_mb':return (a.min_mem_mb || 0) - (b.min_mem_mb || 0);
+    case 'nodes':     return (a.nodes || 0) - (b.nodes || 0);
+    default: return 0;
+  }
+}
+
+function renderJobs() {
+  const p = parseFilter(ui.filterText);
+  const filtered = ui.jobs.filter(j => matchesFilter(j, p));
+  filtered.sort((a, b) => {
+    const c = compare(a, b, ui.sortKey);
+    return ui.sortDesc ? -c : c;
+  });
+  document.getElementById('jobs-count').textContent =
+    filtered.length === ui.jobs.length
+      ? `${ui.jobs.length} jobs`
+      : `${filtered.length} of ${ui.jobs.length} jobs`;
+
   const tbody = document.querySelector('#jobs tbody');
-  tbody.innerHTML = jobs.map(j => {
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="13" class="muted" style="text-align:center;padding:24px">no matching jobs</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map(j => {
     const k = stateShort(j.state);
-    const actions = readonly ? '' : `
+    const g = gpuCount(j.gres);
+    const w = waitSeconds(j);
+    const actions = ui.readonly ? '' : `
       <button class="btn danger" data-job="${j.job_id}" data-action="cancel">cancel</button>
       <button class="btn warn"   data-job="${j.job_id}" data-action="hold">hold</button>`;
     return `<tr>
@@ -187,31 +583,31 @@ function renderJobs(jobs, readonly) {
       <td class="state ${k}">${k}</td>
       <td>${j.elapsed_seconds != null ? hms(j.elapsed_seconds) : '-'}</td>
       <td>${j.time_limit_seconds != null ? hms(j.time_limit_seconds) : '-'}</td>
-      <td>${j.nodes}</td>
+      <td>${w != null ? shortDur(Math.round(w)) : '—'}</td>
+      <td class="gpus">${g > 0 ? g : '—'}</td>
+      <td class="mem">${humanMb(j.min_mem_mb)}</td>
+      <td class="nodes-col">${j.nodes}</td>
       <td>${escape(j.reason_or_nodelist)}</td>
       <td class="row-actions">${actions}</td>
     </tr>`;
   }).join('');
+
+  // Sort indicator on headers.
+  document.querySelectorAll('#jobs thead th').forEach(th => {
+    th.classList.remove('sorted', 'desc');
+    if (th.dataset.sort === ui.sortKey) {
+      th.classList.add('sorted');
+      if (ui.sortDesc) th.classList.add('desc');
+    }
+  });
 }
 
-function stateShort(s) {
-  if (typeof s === 'string') return s;
-  return Object.keys(s)[0] ? s[Object.keys(s)[0]] || Object.keys(s)[0] : 'UNK';
-}
-
-function escape(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
-}
-
-// ---- Modal + actions --------------------------------------------------
+// ---- Modal + actions ------------------------------------------------
 
 let pending = null;
 function openModal(action, jobId) {
   pending = { action, jobId };
-  document.getElementById('modal-title').textContent =
-    `${action} job ${jobId}`;
+  document.getElementById('modal-title').textContent = `${action} job ${jobId}`;
   document.getElementById('modal-cmd').textContent =
     action === 'cancel' ? `scancel ${jobId}` : `scontrol ${action} ${jobId}`;
   document.getElementById('modal').hidden = false;
@@ -223,7 +619,12 @@ function closeModal() {
 
 document.addEventListener('click', async (e) => {
   const t = e.target;
-  if (t.matches('button[data-action]')) {
+  if (t.matches('#jobs thead th[data-sort]')) {
+    const key = t.dataset.sort;
+    if (ui.sortKey === key) ui.sortDesc = !ui.sortDesc;
+    else { ui.sortKey = key; ui.sortDesc = false; }
+    renderJobs();
+  } else if (t.matches('button[data-action]')) {
     openModal(t.dataset.action, t.dataset.job);
   } else if (t.id === 'modal-cancel') {
     closeModal();
@@ -236,7 +637,14 @@ document.addEventListener('click', async (e) => {
     } catch (err) {
       alert(err.message);
     }
+  } else if (t.id === 'refresh-btn') {
+    refresh();
   }
+});
+
+document.getElementById('filter-input').addEventListener('input', (e) => {
+  ui.filterText = e.target.value;
+  renderJobs();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -248,15 +656,19 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     openAssist();
   }
-  // 'r' triggers refresh only when no text input is focused.
   if (
-    e.key === 'r' &&
-    !e.metaKey && !e.ctrlKey &&
+    e.key === 'r' && !e.metaKey && !e.ctrlKey &&
     document.activeElement?.tagName !== 'INPUT'
   ) refresh();
+  if (
+    e.key === '/' && document.activeElement?.tagName !== 'INPUT'
+  ) {
+    e.preventDefault();
+    document.getElementById('filter-input').focus();
+  }
 });
 
-// ---- Assist modal -----------------------------------------------------
+// ---- Assist modal ---------------------------------------------------
 
 function openAssist() {
   document.getElementById('assist').hidden = false;
@@ -281,14 +693,10 @@ document.addEventListener('click', (e) => {
   }
 });
 document.getElementById('assist-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    sendAssist();
-  }
+  if (e.key === 'Enter') { e.preventDefault(); sendAssist(); }
 });
 
-let selectedJobId = null; // Reserved for a future "selected row" indicator.
-
+let selectedJobId = null;
 async function sendAssist() {
   const input = document.getElementById('assist-input');
   const status = document.getElementById('assist-status');
@@ -336,24 +744,34 @@ function renderAssistResponse(r) {
   out.innerHTML = head + body + cmds;
 }
 
-// ---- Main loop --------------------------------------------------------
+// ---- Main loop ------------------------------------------------------
 
 document.getElementById('refresh-seconds').textContent = String(REFRESH_MS / 1000);
 
 async function refresh() {
   try {
-    const data = await fetchJson('/api/dashboard');
-    document.getElementById('cluster').textContent = data.cluster.name;
-    document.getElementById('readonly').hidden = !data.readonly;
-    const snap = data.snapshot;
+    const [dash, history] = await Promise.all([
+      fetchJson('/api/dashboard'),
+      fetchJson('/api/history').catch(() => ({ points: [] })),
+    ]);
+    document.getElementById('cluster').textContent = dash.cluster.name;
+    document.getElementById('readonly').hidden = !dash.readonly;
+    ui.readonly = dash.readonly;
+    const snap = dash.snapshot;
+    ui.jobs = snap.jobs;
     document.getElementById('status').textContent = snap.last_error
       ? `error: ${snap.last_error}`
       : (snap.last_refresh ? `updated ${new Date(snap.last_refresh).toLocaleTimeString()}` : 'no data');
+
+    renderKpis(snap);
+    renderTrends(history);
+    renderStateDonut(snap.jobs);
+    renderWaitHist(snap.jobs);
+    renderTopUsers(snap.jobs);
     renderResources(snap.resources);
-    renderQueue(snap.jobs);
     renderEnding(snap.jobs);
     renderPartitions(snap.partitions);
-    renderJobs(snap.jobs, data.readonly);
+    renderJobs();
   } catch (err) {
     document.getElementById('status').textContent = `error: ${err.message}`;
   }

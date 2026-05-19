@@ -7,15 +7,53 @@ use std::time::Duration;
 
 use crate::db::snapshots;
 use crate::slurm::model::ClusterResources;
+use crate::slurm::state::JobState;
 use crate::slurm::{sinfo, squeue};
-use crate::web::state::{Snapshot, WebState};
+use crate::web::state::{HISTORY_CAPACITY, HistoryPoint, Snapshot, WebState};
 
 pub async fn run(state: Arc<WebState>, interval: Duration) {
     let mut ticker = tokio::time::interval(interval);
     loop {
         ticker.tick().await;
         let snapshot = build_snapshot(&state).await;
+        let point = derive_history_point(&snapshot);
         *state.snapshot.write().await = snapshot;
+        let mut hist = state.history.write().await;
+        if hist.len() >= HISTORY_CAPACITY {
+            hist.pop_front();
+        }
+        hist.push_back(point);
+    }
+}
+
+fn derive_history_point(s: &Snapshot) -> HistoryPoint {
+    let mut n_running = 0u32;
+    let mut n_pending = 0u32;
+    let mut n_failed = 0u32;
+    for j in &s.jobs {
+        match j.state {
+            JobState::Running => n_running += 1,
+            JobState::Pending => n_pending += 1,
+            JobState::Failed
+            | JobState::Timeout
+            | JobState::NodeFail
+            | JobState::BootFail
+            | JobState::Deadline
+            | JobState::OutOfMemory => n_failed += 1,
+            _ => {}
+        }
+    }
+    HistoryPoint {
+        t: s.last_refresh.unwrap_or_else(chrono::Utc::now),
+        cpu_pct: s.resources.cpus.pct_allocated() * 100.0,
+        gpu_pct: s.resources.gpus.pct_allocated() * 100.0,
+        mem_pct: s.resources.memory_mb.pct_allocated() * 100.0,
+        nodes_alloc: s.resources.nodes.allocated,
+        nodes_total: s.resources.nodes.total,
+        n_running,
+        n_pending,
+        n_failed,
+        n_total: s.jobs.len() as u32,
     }
 }
 

@@ -114,13 +114,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     kv!("NodeList", d.nodes_alloc.as_deref());
     kv!("ExitCode", d.exit_code.as_deref());
 
-    if let Some(stats) = &state.details_history {
-        lines.push(Line::raw(""));
+    // Always show the History header so the user sees where past-run
+    // stats land, even on a fresh DB where this job's name hasn't been
+    // seen before.
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        " History",
+        theme.header_style().add_modifier(Modifier::BOLD),
+    )));
+    if state.details_history.is_none() {
         lines.push(Line::from(Span::styled(
-            " History",
-            theme.header_style().add_modifier(Modifier::BOLD),
+            "  (no past runs of this job name recorded yet — bars appear after \
+             the first finished run)",
+            Style::default().fg(theme.muted),
         )));
-
+    }
+    if let Some(stats) = &state.details_history {
         // Summary line + last-seen.
         let mut summary_spans: Vec<Span<'_>> = vec![
             Span::styled("  runs       ", muted_style),

@@ -155,10 +155,13 @@ fn render_group_row<'a>(
             continue;
         }
         if !first {
-            st_spans.push(Span::styled(" ", muted));
+            // Two spaces between chips: with ambiguous-width glyphs
+            // (▶ ◷ ✘ ‖ etc.) a single space lets the next chip's glyph
+            // visually overlap the previous chip's count.
+            st_spans.push(Span::styled("  ", muted));
         }
         st_spans.push(Span::styled(
-            format!("{glyph}{n}"),
+            format!("{glyph} {n}"),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
         first = false;

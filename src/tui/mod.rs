@@ -614,6 +614,13 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
     // gate further keypresses — only the modals above do. Errors clear
     // automatically on the next successful refresh.
 
+    // If the user is editing an LLM config field in Settings, the
+    // sub-handler should absorb every character — otherwise typing `1`,
+    // `2`, `3` into a host or model name would switch views.
+    if state.view == View::Settings && state.settings.edit_buffer.is_some() {
+        return handle_key_settings(key, state);
+    }
+
     // View switches are global (skip in input modes).
     match key.code {
         KeyCode::Char('1') => {

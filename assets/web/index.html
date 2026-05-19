@@ -8,21 +8,110 @@
   </head>
   <body>
     <header class="bar">
+      <span class="prompt">▌&gt;_</span>
       <span class="brand">slurmdash</span>
       <span id="cluster" class="cluster">—</span>
       <span id="status" class="muted">connecting…</span>
+      <span class="spacer"></span>
+      <button id="refresh-btn" class="btn small" title="refresh now (r)">↻ refresh</button>
       <span id="readonly" class="badge readonly" hidden>readonly</span>
     </header>
 
     <main>
+      <!-- KPI strip ----------------------------------------------------->
+      <section class="card kpi-strip">
+        <div class="kpi" data-kind="jobs">
+          <div class="kpi-label">JOBS</div>
+          <div class="kpi-value" id="kpi-jobs">—</div>
+        </div>
+        <div class="kpi" data-kind="running">
+          <div class="kpi-label">▶ RUN</div>
+          <div class="kpi-value" id="kpi-running">—</div>
+        </div>
+        <div class="kpi" data-kind="pending">
+          <div class="kpi-label">◷ PEND</div>
+          <div class="kpi-value" id="kpi-pending">—</div>
+        </div>
+        <div class="kpi" data-kind="held">
+          <div class="kpi-label">‖ HOLD</div>
+          <div class="kpi-value" id="kpi-held">—</div>
+        </div>
+        <div class="kpi" data-kind="failed">
+          <div class="kpi-label">✘ FAIL</div>
+          <div class="kpi-value" id="kpi-failed">—</div>
+        </div>
+        <div class="kpi" data-kind="nodes">
+          <div class="kpi-label">NODES</div>
+          <div class="kpi-value" id="kpi-nodes">—</div>
+        </div>
+        <div class="kpi" data-kind="gpus">
+          <div class="kpi-label">GPUs</div>
+          <div class="kpi-value" id="kpi-gpus">—</div>
+        </div>
+        <div class="kpi" data-kind="gpu-jobs">
+          <div class="kpi-label">Σ GPU·JOB</div>
+          <div class="kpi-value" id="kpi-gpu-jobs">—</div>
+        </div>
+        <div class="kpi" data-kind="wait">
+          <div class="kpi-label">MEAN WAIT</div>
+          <div class="kpi-value" id="kpi-wait">—</div>
+        </div>
+      </section>
+
+      <!-- Trend sparklines: 4 charts side by side -------------------------->
+      <section class="row trends">
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h2>CPU</h2>
+            <span id="trend-cpu-now" class="chart-now">—</span>
+          </div>
+          <div id="trend-cpu" class="trend"></div>
+        </div>
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h2>GPU</h2>
+            <span id="trend-gpu-now" class="chart-now">—</span>
+          </div>
+          <div id="trend-gpu" class="trend"></div>
+        </div>
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h2>Memory</h2>
+            <span id="trend-mem-now" class="chart-now">—</span>
+          </div>
+          <div id="trend-mem" class="trend"></div>
+        </div>
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h2>Queue depth</h2>
+            <span id="trend-queue-now" class="chart-now">—</span>
+          </div>
+          <div id="trend-queue" class="trend"></div>
+        </div>
+      </section>
+
+      <!-- Distributions row: state donut + wait histogram + top users ---->
+      <section class="row dist">
+        <div class="card dist-card">
+          <h2>Job states</h2>
+          <div id="state-donut" class="donut"></div>
+          <div id="state-legend" class="legend"></div>
+        </div>
+        <div class="card dist-card">
+          <h2>Wait distribution</h2>
+          <div id="wait-hist"></div>
+        </div>
+        <div class="card dist-card">
+          <h2>Top users</h2>
+          <div id="top-users"></div>
+        </div>
+      </section>
+
+      <!-- Cluster resources + Ending soon row ---------------------------->
       <section class="row">
         <div class="card" id="resources-card">
-          <h2>Resources</h2>
+          <h2>Cluster resources</h2>
           <div id="resources"></div>
-        </div>
-        <div class="card" id="queue-card">
-          <h2>Queue</h2>
-          <div id="queue"></div>
         </div>
         <div class="card" id="ending-card">
           <h2>Ending soon</h2>
@@ -30,25 +119,36 @@
         </div>
       </section>
 
+      <!-- Partitions ---------------------------------------------------->
       <section class="card wide">
         <h2>Partitions</h2>
         <div id="partitions"></div>
       </section>
 
+      <!-- Jobs table ---------------------------------------------------->
       <section class="card wide">
-        <h2>Jobs</h2>
+        <div class="jobs-head">
+          <h2>Jobs</h2>
+          <input id="filter-input" type="search"
+                 placeholder="filter:  user:alice  partition:gpu  state:R  gpu  cpu  m:&gt;16G"
+                 autocomplete="off" spellcheck="false" />
+          <span id="jobs-count" class="muted">—</span>
+        </div>
         <table id="jobs">
           <thead>
             <tr>
-              <th>Job</th>
-              <th>Part</th>
-              <th>Name</th>
-              <th>User</th>
-              <th>State</th>
-              <th>Elapsed</th>
-              <th>Limit</th>
-              <th>Nodes</th>
-              <th>Reason</th>
+              <th data-sort="job_id">Job</th>
+              <th data-sort="partition">Part</th>
+              <th data-sort="name">Name</th>
+              <th data-sort="user">User</th>
+              <th data-sort="state">ST</th>
+              <th data-sort="elapsed_seconds">Elapsed</th>
+              <th data-sort="time_limit_seconds">Limit</th>
+              <th data-sort="wait">Wait</th>
+              <th data-sort="gpus">GPU</th>
+              <th data-sort="min_mem_mb">Mem</th>
+              <th data-sort="nodes">N</th>
+              <th>Reason / Nodes</th>
               <th></th>
             </tr>
           </thead>
@@ -83,7 +183,7 @@
 
     <footer class="bar muted">
       auto-refresh every <span id="refresh-seconds">5</span>s ·
-      keys: <kbd>r</kbd> refresh now · <kbd>Ctrl+K</kbd> assist · <kbd>Esc</kbd> close modal
+      keys: <kbd>r</kbd> refresh · <kbd>/</kbd> filter · <kbd>Ctrl+K</kbd> assist · <kbd>Esc</kbd> close modal
     </footer>
 
     <script src="/app.js"></script>

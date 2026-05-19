@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -20,6 +21,28 @@ pub struct Snapshot {
     pub last_error: Option<String>,
 }
 
+/// Single trailing-history sample. Pushed by the background refresh
+/// loop after each snapshot completes. Charts in the web UI consume
+/// these.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryPoint {
+    pub t: chrono::DateTime<chrono::Utc>,
+    pub cpu_pct: f64,
+    pub gpu_pct: f64,
+    pub mem_pct: f64,
+    pub nodes_alloc: u32,
+    pub nodes_total: u32,
+    pub n_running: u32,
+    pub n_pending: u32,
+    pub n_failed: u32,
+    pub n_total: u32,
+}
+
+/// How many history samples to retain in memory. At a 5s refresh that
+/// is one hour of trend data; at 1s refresh it is 12 minutes. Old
+/// samples drop from the front of the ring.
+pub const HISTORY_CAPACITY: usize = 720;
+
 pub struct WebState {
     pub handle: Arc<RunnerHandle>,
     pub db: Option<Db>,
@@ -27,6 +50,7 @@ pub struct WebState {
     pub token: String,
     pub readonly: bool,
     pub snapshot: RwLock<Snapshot>,
+    pub history: RwLock<VecDeque<HistoryPoint>>,
     pub cluster_id: RwLock<Option<i64>>,
 }
 
@@ -45,6 +69,7 @@ impl WebState {
             token,
             readonly,
             snapshot: RwLock::new(Snapshot::default()),
+            history: RwLock::new(VecDeque::with_capacity(HISTORY_CAPACITY)),
             cluster_id: RwLock::new(None),
         }
     }

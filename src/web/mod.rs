@@ -101,6 +101,7 @@ pub async fn spawn(
         .route("/style.css", get(assets::style))
         .route("/app.js", get(assets::app_js))
         .route("/api/dashboard", get(api::dashboard))
+        .route("/api/history", get(api::history))
         .route("/api/jobs/:job_id", get(api::job_details))
         .route("/api/jobs/:job_id/cancel", post(api::cancel))
         .route("/api/jobs/:job_id/hold", post(api::hold))

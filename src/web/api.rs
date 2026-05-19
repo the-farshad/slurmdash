@@ -50,6 +50,21 @@ pub async fn dashboard(
     Ok(Json(payload))
 }
 
+pub async fn history(
+    state_in: State<Arc<WebState>>,
+    headers: HeaderMap,
+    query: Option<Query<TokenQuery>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let state = require(state_in, headers, query)?;
+    let hist = state.history.read().await;
+    let points: Vec<_> = hist.iter().cloned().collect();
+    let payload = serde_json::json!({
+        "points": points,
+        "capacity": crate::web::state::HISTORY_CAPACITY,
+    });
+    Ok(Json(payload))
+}
+
 pub async fn job_details(
     state_in: State<Arc<WebState>>,
     headers: HeaderMap,
