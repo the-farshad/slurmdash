@@ -109,10 +109,7 @@ pub fn render(
             for (i, cmd) in resp.commands.iter().enumerate().take(9) {
                 out.push(Line::from(vec![
                     Span::styled(format!(" {}. ", i + 1), Style::default().fg(theme.accent)),
-                    Span::styled(
-                        cmd.preview.clone(),
-                        Style::default().fg(theme.accent),
-                    ),
+                    Span::styled(cmd.preview.clone(), Style::default().fg(theme.accent)),
                 ]));
             }
         }
@@ -136,19 +133,40 @@ pub fn render(
     );
 
     // ---- hint footer -----------------------------------------------------
-    let hint = Line::from(vec![
-        Span::styled("Enter", theme.header_style()),
-        Span::raw(" send · "),
-        Span::styled("1-9", theme.header_style()),
-        Span::raw(" run command · "),
-        Span::styled("y", theme.header_style()),
-        Span::raw(" copy response · "),
-        Span::styled("Shift+drag", theme.header_style()),
-        Span::raw(" select text · "),
-        Span::styled("Esc", theme.header_style()),
-        Span::raw(" close"),
-    ]);
-    frame.render_widget(Paragraph::new(hint).style(theme.footer_style()), layout[2]);
+    // The transient copy-status banner replaces the hint line for one
+    // redraw cycle (cleared on next keypress) so the user sees that
+    // `y` actually did something.
+    if let Some(notice) = &dialog.copy_notice {
+        let color = if notice.starts_with('✓') {
+            theme.usage_low
+        } else if notice.starts_with('↗') {
+            theme.action_warning
+        } else {
+            theme.action_danger
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                notice.clone(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )))
+            .wrap(Wrap { trim: false }),
+            layout[2],
+        );
+    } else {
+        let hint = Line::from(vec![
+            Span::styled("Enter", theme.header_style()),
+            Span::raw(" send · "),
+            Span::styled("1-9", theme.header_style()),
+            Span::raw(" run command · "),
+            Span::styled("y", theme.header_style()),
+            Span::raw(" copy response · "),
+            Span::styled("Shift+drag", theme.header_style()),
+            Span::raw(" select · "),
+            Span::styled("Esc", theme.header_style()),
+            Span::raw(" close"),
+        ]);
+        frame.render_widget(Paragraph::new(hint).style(theme.footer_style()), layout[2]);
+    }
 }
 
 // ---- Markdown-to-spans renderer ---------------------------------------------
@@ -209,7 +227,10 @@ fn render_markdown<'a>(text: &str, theme: &Theme) -> Vec<Line<'a>> {
         }
         // Bullet lists: replace "- " / "* " with a styled glyph.
         let trimmed = raw.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
             let indent = raw.len() - trimmed.len();
             let mut spans = vec![
                 Span::raw(" ".repeat(indent)),
@@ -225,10 +246,7 @@ fn render_markdown<'a>(text: &str, theme: &Theme) -> Vec<Line<'a>> {
             let (num, rest) = trimmed.split_at(num_end);
             let mut spans = vec![
                 Span::raw(" ".repeat(indent)),
-                Span::styled(
-                    format!(" {num} "),
-                    Style::default().fg(theme.accent),
-                ),
+                Span::styled(format!(" {num} "), Style::default().fg(theme.accent)),
             ];
             spans.extend(inline_spans(rest, theme));
             out.push(Line::from(spans));
@@ -300,9 +318,7 @@ fn inline_spans<'a>(s: &str, theme: &Theme) -> Vec<Span<'a>> {
                 flush_plain(&s[plain_start..i], &mut out);
                 out.push(Span::styled(
                     s[i + 2..end_abs].to_string(),
-                    Style::default()
-                        .fg(theme.fg)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
                 ));
                 i = end_abs + 2;
                 plain_start = i;

@@ -62,9 +62,11 @@ pub fn vertical_spark(samples: &[f32], cells: usize) -> String {
     let visible_start = samples.len().saturating_sub(total_slots - pad);
 
     let mut slots: Vec<u32> = vec![0; pad];
-    slots.extend(samples[visible_start..].iter().map(|v| {
-        ((v.clamp(0.0, 1.0) * 4.0).round() as u32).min(4)
-    }));
+    slots.extend(
+        samples[visible_start..]
+            .iter()
+            .map(|v| ((v.clamp(0.0, 1.0) * 4.0).round() as u32).min(4)),
+    );
 
     let mut out = String::with_capacity(cells * 3);
     for pair in slots.chunks(2) {

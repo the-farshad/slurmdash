@@ -206,6 +206,9 @@ pub struct AssistDialog {
     pub response: Option<AssistResponse>,
     pub in_flight: bool,
     pub error: Option<String>,
+    /// Last clipboard / copy status surfaced inline in the dialog (e.g.
+    /// "✓ copied 412 chars via xclip"). Cleared on the next keypress.
+    pub copy_notice: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]

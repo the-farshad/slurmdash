@@ -144,10 +144,7 @@ fn push_jobs_summary(s: &mut String, jobs: &[Job]) {
         *by_state.entry(j.state.short()).or_insert(0) += 1;
     }
     if !by_state.is_empty() {
-        let parts: Vec<String> = by_state
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        let parts: Vec<String> = by_state.iter().map(|(k, v)| format!("{k}={v}")).collect();
         s.push_str(&format!("  by state: {}\n", parts.join(", ")));
     }
 

@@ -569,16 +569,17 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
 
     // Assist dialog absorbs keys when open.
     if let Some(dialog) = state.assist.as_mut() {
+        // Any keypress clears the transient copy-status banner, except
+        // when the keypress *is* the copy itself (handled below).
+        let clearing_key = !matches!(key.code, KeyCode::Char('y'));
+        if clearing_key {
+            dialog.copy_notice = None;
+        }
         match key.code {
             KeyCode::Esc => {
                 state.assist = None;
             }
-            KeyCode::Enter
-                if !dialog.in_flight && !dialog.input.is_empty() =>
-            {
-                // Allow follow-up prompts: previously we required
-                // `dialog.response.is_none()` which silently dropped
-                // every Enter after the first round-trip.
+            KeyCode::Enter if !dialog.in_flight && !dialog.input.is_empty() => {
                 return Intent::AssistSubmit;
             }
             KeyCode::Backspace => {
@@ -586,13 +587,21 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
             }
             // `y` while the prompt input is empty and a response is
             // visible: yank the response text to the system clipboard
-            // via OSC 52 (supported by most modern terminals).
+            // and display a confirmation banner inside the dialog so
+            // the user knows the key registered (the previous silent
+            // OSC-52-only path made it look broken).
             KeyCode::Char('y') if dialog.input.is_empty() && dialog.response.is_some() => {
-                if let Some(r) = &dialog.response {
-                    copy_to_clipboard(&r.text);
-                }
+                let text = dialog
+                    .response
+                    .as_ref()
+                    .map(|r| r.text.clone())
+                    .unwrap_or_default();
+                let status = copy_to_clipboard(&text);
+                dialog.copy_notice = Some(status);
             }
-            KeyCode::Char(c) if c.is_ascii_digit() && dialog.response.is_some() && dialog.input.is_empty() => {
+            KeyCode::Char(c)
+                if c.is_ascii_digit() && dialog.response.is_some() && dialog.input.is_empty() =>
+            {
                 let idx = (c as u8 - b'0') as usize;
                 if (1..=9).contains(&idx) {
                     return Intent::AssistRun(idx - 1);
@@ -1264,27 +1273,74 @@ async fn save_llm_config(llm: &crate::app::LlmConfig, db: Option<&Db>) {
     }
 }
 
-/// Push `text` to the user's system clipboard via the OSC 52 escape
-/// sequence. The terminal sees an `\x1b]52;c;<base64>\x07` packet and
-/// — if it supports OSC 52 — writes the decoded bytes to the system
-/// clipboard. Supported terminals include iTerm2, kitty, wezterm,
-/// alacritty (with the right config), foot, and many remote `tmux`
-/// setups; GNOME Terminal currently does NOT support this, so the
-/// best-effort write is silent on those.
-fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
+/// Push `text` to the user's system clipboard. Tries native clipboard
+/// tools in priority order (matching the host platform) and falls back
+/// to the OSC 52 escape sequence for terminal-resident copy. Returns a
+/// short status string indicating what worked (or didn't) so the UI can
+/// surface it to the user — the previous OSC-only path was silent and
+/// looked broken whenever the terminal stripped OSC 52 (tmux without
+/// `set -g set-clipboard on`, GNOME Terminal, etc.).
+fn copy_to_clipboard(text: &str) -> String {
+    let candidates: Vec<(&str, &[&str])> = if cfg!(target_os = "macos") {
+        vec![("pbcopy", &[][..])]
+    } else if cfg!(target_os = "windows") {
+        vec![("clip", &[][..])]
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        vec![
+            ("wl-copy", &[][..]),
+            ("xclip", &["-selection", "clipboard"][..]),
+            ("xsel", &["-b", "-i"][..]),
+        ]
+    } else {
+        vec![
+            ("xclip", &["-selection", "clipboard"][..]),
+            ("xsel", &["-b", "-i"][..]),
+            ("wl-copy", &[][..]),
+        ]
+    };
+    for (tool, args) in &candidates {
+        if try_spawn_copy(tool, args, text).is_ok() {
+            return format!("✓ copied {} chars via {tool}", text.chars().count());
+        }
+    }
+    // Fall back to OSC 52 — silent in many terminals but free.
     let b64 = base64_encode(text.as_bytes());
     let mut stdout = std::io::stdout().lock();
-    // BEL-terminated form (\x07) — most widely supported terminator.
+    use std::io::Write;
     let _ = write!(stdout, "\x1b]52;c;{b64}\x07");
     let _ = stdout.flush();
+    let tools: Vec<&str> = candidates.iter().map(|(t, _)| *t).collect();
+    format!(
+        "↗ sent via OSC 52 (terminal-dependent). install one of: {} for native copy",
+        tools.join(" / ")
+    )
+}
+
+fn try_spawn_copy(tool: &str, args: &[&str], text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(tool)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
+        drop(stdin);
+    }
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!("{tool} exited {status}")))
+    }
 }
 
 /// Minimal standard-alphabet Base64 encoder. Pulled inline to avoid
 /// adding a dependency just for the clipboard path.
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 2 < bytes.len() {
