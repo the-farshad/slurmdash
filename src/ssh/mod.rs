@@ -10,6 +10,8 @@ pub mod local;
 pub mod remote;
 pub mod tail;
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use tokio::sync::mpsc;
@@ -68,7 +70,7 @@ pub trait Runner: Send + Sync {
 }
 
 pub struct RunnerHandle {
-    pub runner: Box<dyn Runner>,
+    pub runner: Arc<dyn Runner>,
     pub cluster_name: String,
     pub is_local: bool,
 }
@@ -99,7 +101,7 @@ pub async fn build_runner(cli: &Cli, config: &Config) -> Result<RunnerHandle> {
 
     if profile.local {
         return Ok(RunnerHandle {
-            runner: Box::new(local::LocalRunner::new()),
+            runner: Arc::new(local::LocalRunner::new()),
             cluster_name: name,
             is_local: true,
         });
@@ -112,7 +114,7 @@ pub async fn build_runner(cli: &Cli, config: &Config) -> Result<RunnerHandle> {
 
     let runner = remote::RemoteRunner::connect(&host, profile).await?;
     Ok(RunnerHandle {
-        runner: Box::new(runner),
+        runner: Arc::new(runner),
         cluster_name: name,
         is_local: false,
     })

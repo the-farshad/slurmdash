@@ -1,4 +1,5 @@
 pub mod assist;
+pub mod by_user;
 pub mod confirm;
 pub mod details;
 pub mod ending_soon;

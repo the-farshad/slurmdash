@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   TOML, or print the discovered config path.
 - `slurmdash completions <shell>` — generate bash / zsh / fish /
   powershell / elvish completion scripts via `clap_complete`.
+- TUI: `a` cycles `filter:me` / `filter:all` at runtime; the header
+  shows the active filter next to the cluster name.
+- TUI: `/` opens a text-filter input that matches against job id,
+  name, user, partition, and reason. The header shows `search:…` in
+  the accent color and the job count switches to `shown/total` while
+  a filter is active. Esc cancels, Enter commits, Enter on empty
+  clears.
+- Dashboard top row now includes a **By user** bar chart panel
+  showing job counts per user (sorted descending).
+
+### Changed
+
+- TUI refreshes (squeue + sinfo) run on background tasks via an mpsc
+  channel, so the event loop never blocks on the network. Keys are
+  responsive while the cluster is being polled. The header shows
+  `refreshing…` while a fetch is in flight. Initial paint stays
+  synchronous.
+- `RunnerHandle.runner` is now `Arc<dyn Runner>` so refresh tasks
+  can share it across spawns.
 
 ### Changed
 

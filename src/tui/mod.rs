@@ -64,6 +64,12 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     Ok(())
 }
 
+/// Result of a background refresh task, sent back through `LoopMsg`.
+enum LoopMsg {
+    Jobs(Result<Vec<crate::slurm::model::Job>>),
+    Partitions(Result<Vec<crate::slurm::model::Partition>>),
+}
+
 async fn run_loop(
     terminal: &mut Tui,
     cli: &Cli,
@@ -74,7 +80,6 @@ async fn run_loop(
     let theme = Theme::from_name(cli.theme.as_deref().unwrap_or(&config.ui.theme));
     let refresh_secs = cli.refresh.unwrap_or(config.ui.refresh_seconds).max(1);
     let cluster_label = handle.cluster_name.clone();
-    let runner: &dyn Runner = handle.runner.as_ref();
 
     let cluster_id = match db {
         Some(d) => snapshots::ensure_cluster(&d.pool, &handle.cluster_name, handle.is_local)
@@ -94,8 +99,18 @@ async fn run_loop(
     let mut last_refresh = None;
     let mut log_stream: Option<LineStream> = None;
 
-    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
-    fetch_sinfo(runner, &mut state, db, cluster_id).await;
+    // Bounded mpsc channel for refresh results. Small capacity is fine —
+    // results are processed immediately by the select loop.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<LoopMsg>(8);
+
+    // `runner` is reused below for actions that must be synchronous (scontrol
+    // show, log tail open, action dispatch). Refreshes use the same Arc
+    // cloned into spawned tasks via `trigger_refresh`.
+    let runner: &dyn Runner = handle.runner.as_ref();
+
+    // Initial fetch is synchronous so the first paint has data.
+    fetch_sync(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
+    fetch_sinfo_sync(runner, &mut state, db, cluster_id).await;
 
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(refresh_secs));
@@ -115,14 +130,16 @@ async fn run_loop(
                     None => log_stream = None,
                 }
             }
+            Some(msg) = rx.recv() => {
+                handle_loop_msg(msg, &mut state, &mut last_refresh);
+            }
             Some(Ok(event)) = events.next() => {
                 let intent = handle_event(event, &mut state);
                 match intent {
                     Intent::None => {}
                     Intent::Quit => break,
                     Intent::Refresh => {
-                        fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
-                        fetch_sinfo(runner, &mut state, db, cluster_id).await;
+                        trigger_refresh(handle, cli, db, cluster_id, &mut state, &tx);
                     }
                     Intent::OpenDetails => {
                         if let Some(job) = state.selected_job() {
@@ -178,7 +195,17 @@ async fn run_loop(
                             .await;
                             match result {
                                 Ok(()) => {
-                                    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
+                                    // Kick off a background refresh — the
+                                    // result lands a frame later but the
+                                    // UI stays responsive.
+                                    trigger_refresh(
+                                        handle,
+                                        cli,
+                                        db,
+                                        cluster_id,
+                                        &mut state,
+                                        &tx,
+                                    );
                                 }
                                 Err(e) => state.last_error = Some(format!("{e}")),
                             }
@@ -195,8 +222,7 @@ async fn run_loop(
             }
             _ = ticker.tick() => {
                 if state.view != View::Logs {
-                    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
-                    fetch_sinfo(runner, &mut state, db, cluster_id).await;
+                    trigger_refresh(handle, cli, db, cluster_id, &mut state, &tx);
                 }
             }
         }
@@ -308,15 +334,17 @@ fn render_dashboard(
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40),
             Constraint::Percentage(30),
-            Constraint::Percentage(30),
+            Constraint::Percentage(22),
+            Constraint::Percentage(26),
+            Constraint::Percentage(22),
         ])
         .split(chunks[1]);
 
     widgets::resources::render(frame, top[0], &state.resources, theme);
     widgets::queue::render(frame, top[1], &state.jobs, theme);
-    widgets::ending_soon::render(frame, top[2], &state.jobs, theme);
+    widgets::by_user::render(frame, top[2], &state.jobs, theme);
+    widgets::ending_soon::render(frame, top[3], &state.jobs, theme);
 
     widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
     widgets::job_table::render(frame, chunks[3], state, theme);
@@ -421,6 +449,28 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         return Intent::None;
     }
 
+    // Jobs filter input — `/` in Dashboard/Jobs view opens this.
+    if let Some(buf) = state.filter_input.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                state.filter_input = None;
+            }
+            KeyCode::Enter => {
+                let q = state.filter_input.take().unwrap_or_default();
+                state.text_filter = if q.trim().is_empty() { None } else { Some(q) };
+                state.rebuild_filtered_jobs();
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Char(c) => {
+                buf.push(c);
+            }
+            _ => {}
+        }
+        return Intent::None;
+    }
+
     if state.confirm.is_some() {
         match key.code {
             KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -489,6 +539,10 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
         KeyCode::Char('a') => {
             state.filter = state.filter.cycle();
             Intent::Refresh
+        }
+        KeyCode::Char('/') => {
+            state.filter_input = Some(state.text_filter.clone().unwrap_or_default());
+            Intent::None
         }
         KeyCode::Enter | KeyCode::Char('d') => Intent::OpenDetails,
         KeyCode::Char('l') => Intent::OpenLog(LogKind::Stdout),
@@ -647,7 +701,9 @@ async fn open_log(
     Ok((LogView::new(job_id.to_string(), kind, path), stream))
 }
 
-async fn fetch(
+/// Synchronous fetch used only for the initial frame. Background ticker
+/// fetches go through [`trigger_refresh`] instead.
+async fn fetch_sync(
     runner: &dyn Runner,
     cli: &Cli,
     state: &mut AppState,
@@ -657,20 +713,89 @@ async fn fetch(
 ) {
     let opts = squeue_opts(cli, &state.filter);
     match squeue::list(runner, &opts).await {
-        Ok(mut jobs) => {
-            apply_sort(&mut jobs, state.sort);
-            if state.selected >= jobs.len() && !jobs.is_empty() {
-                state.selected = jobs.len() - 1;
-            }
+        Ok(jobs) => {
             if let (Some(d), Some(cid)) = (db, cluster_id) {
                 let _ = snapshots::write_jobs(&d.pool, cid, &jobs).await;
             }
-            state.jobs = jobs;
+            state.all_jobs = jobs;
+            state.rebuild_filtered_jobs();
             state.last_error = None;
             *last_refresh = Some(chrono::Utc::now());
         }
         Err(e) => {
             state.last_error = Some(format!("{e}"));
+        }
+    }
+}
+
+/// Spawn background squeue + sinfo refreshes. Results are delivered through
+/// `tx` and handled in [`handle_loop_msg`]. Idempotent — if a refresh is
+/// already in flight, that kind is skipped.
+fn trigger_refresh(
+    handle: &RunnerHandle,
+    cli: &Cli,
+    db: Option<&Db>,
+    cluster_id: Option<i64>,
+    state: &mut AppState,
+    tx: &tokio::sync::mpsc::Sender<LoopMsg>,
+) {
+    if !state.refresh.jobs_in_flight {
+        state.refresh.jobs_in_flight = true;
+        let runner = handle.runner.clone();
+        let opts = squeue_opts(cli, &state.filter);
+        let tx = tx.clone();
+        let pool = db.map(|d| d.pool.clone());
+        tokio::spawn(async move {
+            let result = squeue::list(runner.as_ref(), &opts).await;
+            if let (Ok(jobs), Some(p), Some(cid)) = (&result, &pool, cluster_id) {
+                let _ = snapshots::write_jobs(p, cid, jobs).await;
+            }
+            let _ = tx.send(LoopMsg::Jobs(result)).await;
+        });
+    }
+    if !state.refresh.sinfo_in_flight {
+        state.refresh.sinfo_in_flight = true;
+        let runner = handle.runner.clone();
+        let tx = tx.clone();
+        let pool = db.map(|d| d.pool.clone());
+        tokio::spawn(async move {
+            let result = sinfo::list_partitions(runner.as_ref()).await;
+            if let (Ok(parts), Some(p), Some(cid)) = (&result, &pool, cluster_id) {
+                let _ = snapshots::write_resources(p, cid, parts).await;
+            }
+            let _ = tx.send(LoopMsg::Partitions(result)).await;
+        });
+    }
+}
+
+/// Apply the result of a finished background task to the app state.
+fn handle_loop_msg(
+    msg: LoopMsg,
+    state: &mut AppState,
+    last_refresh: &mut Option<chrono::DateTime<chrono::Utc>>,
+) {
+    match msg {
+        LoopMsg::Jobs(Ok(jobs)) => {
+            state.refresh.jobs_in_flight = false;
+            state.all_jobs = jobs;
+            state.rebuild_filtered_jobs();
+            state.last_error = None;
+            *last_refresh = Some(chrono::Utc::now());
+        }
+        LoopMsg::Jobs(Err(e)) => {
+            state.refresh.jobs_in_flight = false;
+            state.last_error = Some(format!("{e}"));
+        }
+        LoopMsg::Partitions(Ok(parts)) => {
+            state.refresh.sinfo_in_flight = false;
+            let resources = ClusterResources::from_partitions(&parts);
+            state.push_resource_sample(ResourceSample::from(chrono::Utc::now(), &resources));
+            state.resources = resources;
+            state.partitions = parts;
+        }
+        LoopMsg::Partitions(Err(e)) => {
+            state.refresh.sinfo_in_flight = false;
+            tracing::warn!(error = %e, "sinfo refresh failed");
         }
     }
 }
@@ -770,7 +895,7 @@ fn squeue_opts(cli: &Cli, filter: &FilterMode) -> squeue::Options {
     }
 }
 
-async fn fetch_sinfo(
+async fn fetch_sinfo_sync(
     runner: &dyn Runner,
     state: &mut AppState,
     db: Option<&Db>,

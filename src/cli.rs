@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(
     name = "slurmdash",
     version,
@@ -74,7 +74,7 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     /// Connect to a saved cluster profile (same as --cluster)
     Connect { cluster: String },
@@ -172,7 +172,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum ConfigCmd {
     /// Write a starter config to ~/.config/slurmdash/config.toml
     Init {
@@ -189,7 +189,7 @@ pub enum ConfigCmd {
     Path,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum DbCommand {
     /// Show database status
     Status,
@@ -210,7 +210,7 @@ pub enum DbCommand {
     Backup { path: PathBuf },
 }
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ExportFormat {
     Json,
     Csv,

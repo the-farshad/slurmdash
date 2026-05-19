@@ -48,6 +48,10 @@ const LOG_BUFFER_LIMIT: usize = 5_000;
 
 #[derive(Debug, Default)]
 pub struct AppState {
+    /// The full job list from the most recent squeue refresh (pre-filter).
+    pub all_jobs: Vec<Job>,
+    /// The displayed list — `all_jobs` after applying `text_filter` and
+    /// the active sort. Selection / rendering operate on this.
     pub jobs: Vec<Job>,
     pub partitions: Vec<Partition>,
     pub resources: ClusterResources,
@@ -63,6 +67,12 @@ pub struct AppState {
 
     pub sort: SortState,
     pub filter: FilterMode,
+    /// Committed free-text filter (set by Enter in the `/` input).
+    pub text_filter: Option<String>,
+    /// While `Some`, the user is typing into the `/` filter input.
+    pub filter_input: Option<String>,
+    /// Background refresh state — set when a squeue/sinfo task is in flight.
+    pub refresh: RefreshFlags,
     /// Bounds of the job-table widget on the last render, used to translate
     /// mouse clicks into row indices.
     pub table_rect: Option<Rect>,
@@ -72,6 +82,12 @@ pub struct AppState {
     pub search_input: Option<String>,
 
     pub assist: Option<AssistDialog>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RefreshFlags {
+    pub jobs_in_flight: bool,
+    pub sinfo_in_flight: bool,
 }
 
 #[derive(Debug, Default)]
@@ -276,7 +292,38 @@ impl ResourceSample {
     }
 }
 
+fn matches_text_filter(j: &Job, filter: Option<&str>) -> bool {
+    let Some(q) = filter else { return true };
+    let q = q.trim();
+    if q.is_empty() {
+        return true;
+    }
+    let q = q.to_lowercase();
+    j.job_id.to_lowercase().contains(&q)
+        || j.name.to_lowercase().contains(&q)
+        || j.user.to_lowercase().contains(&q)
+        || j.partition.to_lowercase().contains(&q)
+        || j.reason_or_nodelist.to_lowercase().contains(&q)
+}
+
 impl AppState {
+    /// Rebuild `jobs` from `all_jobs` using the current `text_filter`,
+    /// reapply `sort`, and clamp the selection. Call after `all_jobs` or
+    /// `text_filter` or `sort` changes.
+    pub fn rebuild_filtered_jobs(&mut self) {
+        let filter = self.text_filter.as_deref();
+        self.jobs = self
+            .all_jobs
+            .iter()
+            .filter(|j| matches_text_filter(j, filter))
+            .cloned()
+            .collect();
+        apply_sort(&mut self.jobs, self.sort);
+        if !self.jobs.is_empty() && self.selected >= self.jobs.len() {
+            self.selected = self.jobs.len() - 1;
+        }
+    }
+
     pub fn push_resource_sample(&mut self, sample: ResourceSample) {
         if self.resource_history.len() == RESOURCE_HISTORY_LIMIT {
             self.resource_history.pop_front();

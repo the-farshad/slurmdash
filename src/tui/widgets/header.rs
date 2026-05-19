@@ -14,9 +14,14 @@ pub fn render(
     theme: &Theme,
     cluster_label: &str,
     last_refresh: Option<chrono::DateTime<chrono::Utc>>,
-    refreshing: bool,
+    _refreshing: bool,
 ) {
-    let count = format!("{} jobs", state.jobs.len());
+    let refreshing = state.refresh.jobs_in_flight || state.refresh.sinfo_in_flight;
+    let count = if state.text_filter.is_some() && state.jobs.len() != state.all_jobs.len() {
+        format!("{}/{} jobs", state.jobs.len(), state.all_jobs.len())
+    } else {
+        format!("{} jobs", state.all_jobs.len().max(state.jobs.len()))
+    };
     let status = if refreshing {
         "refreshing…".to_string()
     } else if let Some(t) = last_refresh {
@@ -27,7 +32,7 @@ pub fn render(
     let sort = format_sort(state.sort);
     let filter = format!("filter:{}", state.filter.label());
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled("slurmdash", theme.header_style()),
         Span::raw("  "),
         Span::styled(cluster_label.to_string(), Style::default().fg(theme.accent)),
@@ -39,7 +44,24 @@ pub fn render(
         Span::styled(status, Style::default().fg(theme.muted)),
         Span::raw("  "),
         Span::styled(sort, Style::default().fg(theme.muted)),
-    ]);
+    ];
+
+    // Live filter-input feedback, or the committed text filter.
+    if let Some(buf) = &state.filter_input {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("/{buf}_"),
+            Style::default().fg(theme.accent),
+        ));
+    } else if let Some(f) = &state.text_filter {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("search:{f}"),
+            Style::default().fg(theme.accent),
+        ));
+    }
+
+    let line = Line::from(spans);
 
     frame.render_widget(Paragraph::new(line), area);
 }

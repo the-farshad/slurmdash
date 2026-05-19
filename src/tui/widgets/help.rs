@@ -22,6 +22,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         Line::raw(""),
         Line::raw("Filter"),
         Line::raw("  a          toggle between your jobs (--me) and all jobs"),
+        Line::raw("  /          search jobs by id / name / user / partition / reason"),
+        Line::raw("  Esc        cancel the filter input"),
         Line::raw(""),
         Line::raw("Actions   (each opens a confirm modal)"),
         Line::raw("  c          scancel"),
