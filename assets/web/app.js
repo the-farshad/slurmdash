@@ -88,9 +88,30 @@ function aiotPctU64(a) {
   return Number((BigInt(a.allocated) * 100n / (BigInt(a.total) || 1n)));
 }
 
+// Rust's JobState enum serializes unit variants as their full name
+// ("Running", "Pending", "Held", …) and Other(s) as `{Other: "FOO"}`.
+// The TUI / CSS / chart palettes use the Slurm short code (R, PD, …),
+// so we normalize everything to short codes here.
+const STATE_TO_SHORT = {
+  Pending: 'PD', Running: 'R', Suspended: 'S', Completing: 'CG',
+  Completed: 'CD', Cancelled: 'CA', Failed: 'F', Timeout: 'TO',
+  NodeFail: 'NF', Preempted: 'PR', BootFail: 'BF', Deadline: 'DL',
+  OutOfMemory: 'OOM', Held: 'H',
+};
+const STATE_LONG_LABEL = {
+  R: 'Running', PD: 'Pending', S: 'Suspended', CG: 'Completing',
+  CD: 'Completed', CA: 'Cancelled', F: 'Failed', TO: 'Timeout',
+  NF: 'Node Fail', PR: 'Preempted', BF: 'Boot Fail', DL: 'Deadline',
+  OOM: 'Out of Memory', H: 'Held',
+};
+
 function stateShort(s) {
-  if (typeof s === 'string') return s;
-  return Object.keys(s)[0] ? s[Object.keys(s)[0]] || Object.keys(s)[0] : 'UNK';
+  if (typeof s === 'string') return STATE_TO_SHORT[s] || s;
+  // Other("FOO") arrives as { Other: "FOO" } — return the inner string
+  // as the short code; it likely isn't in our palette and will fall
+  // back to muted, which is the correct behavior for unknown states.
+  const k = Object.keys(s)[0];
+  return k ? (s[k] || k) : 'UNK';
 }
 
 function escape(s) {
@@ -285,9 +306,10 @@ function renderStateDonut(jobs) {
       <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="var(--muted)" font-size="10">jobs</text>
     </svg>`;
 
-  document.getElementById('state-legend').innerHTML = segs.map(s => `
-    <div><span class="sw" style="background:${s.color}"></span>${s.key}<span class="cnt">${s.value}</span></div>
-  `).join('') || '<div class="muted">no jobs</div>';
+  document.getElementById('state-legend').innerHTML = segs.map(s => {
+    const label = STATE_LONG_LABEL[s.key] || s.key;
+    return `<div><span class="sw" style="background:${s.color}"></span>${label}<span class="cnt">${s.value}</span></div>`;
+  }).join('') || '<div class="muted">no jobs</div>';
 }
 
 // ---- Wait histogram -------------------------------------------------

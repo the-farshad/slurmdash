@@ -1,5 +1,10 @@
 //! Inline sparkline strip: three small charts side by side (CPU / GPU / MEM)
 //! showing the trailing in-memory `resource_history` from [`AppState`].
+//!
+//! Rendered with Braille dot graphics (two samples per cell, four
+//! vertical levels per dot column) so the History panel that sits at
+//! the top of both the Dashboard and the Statistics view uses the
+//! same dot aesthetic as the per-job History block in details.
 
 use std::collections::VecDeque;
 
@@ -11,9 +16,6 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::app::ResourceSample;
 use crate::tui::theme::Theme;
-
-/// Unicode block characters in increasing height — 8 levels.
-const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
 pub fn render(
     frame: &mut Frame<'_>,
@@ -89,19 +91,8 @@ fn spark(
     if width == 0 {
         return String::new();
     }
-    // Take the last `width` samples; if we have fewer, pad on the left.
     let samples: Vec<f32> = history.iter().map(pick).collect();
-    let start = samples.len().saturating_sub(width);
-    let mut out = String::with_capacity(width);
-    let pad = width.saturating_sub(samples.len() - start);
-    for _ in 0..pad {
-        out.push(' ');
-    }
-    for v in &samples[start..] {
-        let idx = ((v.clamp(0.0, 1.0) * 7.0).round() as usize).min(7);
-        out.push(LEVELS[idx]);
-    }
-    out
+    super::braille::vertical_spark(&samples, width)
 }
 
 fn gradient(pct: f64, theme: &Theme) -> Color {
