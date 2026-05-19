@@ -77,7 +77,6 @@ async fn run_loop(
     handle: &RunnerHandle,
     db: Option<&Db>,
 ) -> Result<()> {
-    let theme = Theme::from_name(cli.theme.as_deref().unwrap_or(&config.ui.theme));
     let refresh_secs = cli.refresh.unwrap_or(config.ui.refresh_seconds).max(1);
     let cluster_label = handle.cluster_name.clone();
 
@@ -88,12 +87,24 @@ async fn run_loop(
         None => None,
     };
 
+    // Resolve the initial theme. Priority: CLI flag > saved settings > config > "dark".
+    let saved_theme = match db {
+        Some(d) => crate::db::settings::get_theme(&d.pool).await.ok().flatten(),
+        None => None,
+    };
+    let initial_theme = cli
+        .theme
+        .clone()
+        .or(saved_theme)
+        .unwrap_or_else(|| config.ui.theme.clone());
+
     let mut state = AppState {
         filter: if cli.all {
             FilterMode::All
         } else {
             FilterMode::Me
         },
+        theme_name: initial_theme,
         ..AppState::default()
     };
     let mut last_refresh = None;
@@ -123,6 +134,9 @@ async fn run_loop(
 
     loop {
         state.frame = state.frame.wrapping_add(1);
+        // Rebuild the theme each frame so `T` cycle takes effect on the
+        // very next draw — Theme is cheap to construct.
+        let theme = Theme::from_name(&state.theme_name);
         let table_rect = draw(terminal, &state, &theme, &cluster_label, last_refresh)?;
         state.table_rect = table_rect;
 
@@ -223,6 +237,15 @@ async fn run_loop(
                     Intent::AssistRun(idx) => {
                         run_assisted_command(&mut state, idx);
                     }
+                    Intent::ThemeChanged => {
+                        if let Some(d) = db {
+                            let pool = d.pool.clone();
+                            let name = state.theme_name.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::db::settings::put_theme(&pool, &name).await;
+                            });
+                        }
+                    }
                 }
                 if state.should_quit { break; }
             }
@@ -253,12 +276,15 @@ fn draw(
 ) -> Result<Option<Rect>> {
     let mut table_rect: Option<Rect> = None;
     terminal.draw(|frame| {
+        // Footer can wrap to 2 lines on narrow terminals so users always
+        // see every keybind. On a 200-col terminal the second line is
+        // just blank.
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(1),
-                Constraint::Length(1),
+                Constraint::Length(2),
             ])
             .split(frame.area());
 
@@ -381,6 +407,8 @@ enum Intent {
     AssistSubmit,
     /// User pressed 1-9 in the assist dialog — execute that proposed command.
     AssistRun(usize),
+    /// User pressed `T` — persist new theme to settings.
+    ThemeChanged,
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
@@ -616,6 +644,10 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
         KeyCode::Char('?') => {
             state.show_help = true;
             Intent::None
+        }
+        KeyCode::Char('T') => {
+            state.theme_name = Theme::next_name(&state.theme_name).to_string();
+            Intent::ThemeChanged
         }
         KeyCode::Char('c') => open_confirm(state, ActionKind::Cancel),
         KeyCode::Char('h') => open_confirm(state, ActionKind::Hold),

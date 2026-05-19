@@ -11,6 +11,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use ratatui::widgets::Wrap;
+
 use crate::app::{AppState, View};
 use crate::tui::theme::Theme;
 
@@ -72,12 +74,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
         spans.push(Span::styled(h.label, Style::default().fg(theme.muted)));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 // ---- per-view hint sets ----------------------------------------------------
 
-const JOBS_HINTS: [Hint; 16] = [
+const JOBS_HINTS: [Hint; 17] = [
     Hint {
         key: "1·2",
         label: "view",
@@ -147,6 +152,11 @@ const JOBS_HINTS: [Hint; 16] = [
         key: "Ctrl+K",
         label: "assist",
         kind: HintKind::Special,
+    },
+    Hint {
+        key: "T",
+        label: "theme",
+        kind: HintKind::Normal,
     },
     Hint {
         key: "?",

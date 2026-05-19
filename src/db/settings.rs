@@ -41,3 +41,61 @@ pub async fn get_last_connection(pool: &sqlx::SqlitePool) -> Result<Option<LastC
         None => Ok(None),
     }
 }
+
+pub async fn put_theme(pool: &sqlx::SqlitePool, name: &str) -> Result<()> {
+    let json = serde_json::to_string(name)?;
+    sqlx::query(
+        "INSERT INTO settings (key, value_json, updated_at) \
+         VALUES ('theme', ?, datetime('now')) \
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, \
+         updated_at = datetime('now')",
+    )
+    .bind(json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_theme(pool: &sqlx::SqlitePool) -> Result<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value_json FROM settings WHERE key = 'theme'")
+            .fetch_optional(pool)
+            .await?;
+    match row {
+        Some((json,)) => Ok(serde_json::from_str::<String>(&json).ok()),
+        None => Ok(None),
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct AssistSettings {
+    pub provider: Option<String>, // ollama | anthropic
+    pub ollama_host: Option<String>,
+    pub ollama_model: Option<String>,
+    pub anthropic_model: Option<String>,
+}
+
+pub async fn put_assist(pool: &sqlx::SqlitePool, value: &AssistSettings) -> Result<()> {
+    let json = serde_json::to_string(value)?;
+    sqlx::query(
+        "INSERT INTO settings (key, value_json, updated_at) \
+         VALUES ('assist', ?, datetime('now')) \
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, \
+         updated_at = datetime('now')",
+    )
+    .bind(json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_assist(pool: &sqlx::SqlitePool) -> Result<Option<AssistSettings>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value_json FROM settings WHERE key = 'assist'")
+            .fetch_optional(pool)
+            .await?;
+    match row {
+        Some((json,)) => Ok(Some(serde_json::from_str(&json)?)),
+        None => Ok(None),
+    }
+}

@@ -85,6 +85,9 @@ pub struct AppState {
     pub table_rect: Option<Rect>,
     /// Frame counter for animating the loading spinner.
     pub frame: u64,
+    /// Active theme name. Cycled with `T`. Persisted to settings KV so the
+    /// last-used theme survives restart.
+    pub theme_name: String,
 
     pub log: Option<LogView>,
     /// While `Some`, the user is typing into the log search input.
