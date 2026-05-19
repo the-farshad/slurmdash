@@ -1,10 +1,11 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::app::AppState;
+use crate::history::JobNameStats;
 use crate::slurm::state::JobState;
 use crate::tui::theme::Theme;
 
@@ -115,26 +116,32 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
 
     if let Some(stats) = &state.details_history {
         lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(" History", theme.header_style())));
+        lines.push(Line::from(Span::styled(
+            " History",
+            theme.header_style().add_modifier(Modifier::BOLD),
+        )));
+
+        // Summary line.
         lines.push(Line::from(vec![
-            Span::styled("  ", muted_style),
-            Span::raw(crate::history::summarize(stats)),
+            Span::styled("  runs       ", muted_style),
+            Span::styled(format!("{}", stats.runs), Style::default().fg(theme.accent)),
         ]));
-        if let (Some(p50), Some(max)) = (stats.elapsed_p50_seconds, stats.elapsed_max_seconds) {
-            // Suggestion line: rough 95% pad against historical max.
-            let pad = max + max / 20;
-            lines.push(Line::from(vec![
-                Span::styled("  suggest --time at least ", muted_style),
-                Span::styled(humanize_dur(pad), Style::default().fg(theme.accent)),
-                Span::styled(
-                    format!(
-                        " (median {} / max {})",
-                        humanize_dur(p50),
-                        humanize_dur(max)
-                    ),
-                    muted_style,
-                ),
-            ]));
+
+        // Outcomes bar — color-coded stacked bar with counts.
+        let bar_width: usize = 30;
+        outcomes_lines(stats, bar_width, theme, &mut lines);
+
+        // Runtime range — min / p50 / max as horizontal bars on a shared
+        // scale. The "suggest --time" value extends the scale so users can
+        // visually compare it with the historical max.
+        if let (Some(min), Some(p50), Some(max)) = (
+            stats.elapsed_min_seconds,
+            stats.elapsed_p50_seconds,
+            stats.elapsed_max_seconds,
+        ) {
+            let suggest = max + max / 20;
+            let scale = suggest.max(1);
+            runtime_range_lines(min, p50, max, suggest, scale, theme, &mut lines);
         }
     }
 
@@ -158,4 +165,124 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             .wrap(Wrap { trim: false }),
         body_area,
     );
+}
+
+/// One "Outcomes" line + a stacked bar segmented into completed / failed /
+/// timeout / cancelled / other categories with their respective colors.
+fn outcomes_lines<'a>(
+    stats: &JobNameStats,
+    bar_width: usize,
+    theme: &Theme,
+    lines: &mut Vec<Line<'a>>,
+) {
+    let cd = stats.completions;
+    let f = stats.failures;
+    let to = stats.timeouts;
+    let ca = stats.cancellations;
+    let total = stats.runs.max(1);
+    let other = stats.runs.saturating_sub(cd + f + to + ca);
+
+    let segments: [(u32, &str, ratatui::style::Color); 5] = [
+        (cd, "CD", theme.completed),
+        (f, "F", theme.failed),
+        (to, "TO", theme.failed),
+        (ca, "CA", theme.cancelled),
+        (other, "•", theme.muted),
+    ];
+
+    let mut spans: Vec<Span<'_>> = Vec::with_capacity(16);
+    spans.push(Span::styled(
+        "  outcomes   ",
+        Style::default().fg(theme.muted),
+    ));
+    spans.push(Span::raw("["));
+    let mut used = 0usize;
+    for (i, (count, _, color)) in segments.iter().enumerate() {
+        let mut w = ((*count as f64 / total as f64) * bar_width as f64).round() as usize;
+        // Make sure the last non-zero segment fills any rounding remainder.
+        if i == segments.len() - 1 {
+            w = bar_width.saturating_sub(used);
+        }
+        if w == 0 {
+            continue;
+        }
+        spans.push(Span::styled("▰".repeat(w), Style::default().fg(*color)));
+        used += w;
+    }
+    if used < bar_width {
+        spans.push(Span::styled(
+            "▱".repeat(bar_width - used),
+            Style::default().fg(theme.border),
+        ));
+    }
+    spans.push(Span::raw("]"));
+    lines.push(Line::from(spans));
+
+    // Legend with counts and colored labels.
+    let mut legend: Vec<Span<'_>> = vec![Span::styled(
+        "             ",
+        Style::default().fg(theme.muted),
+    )];
+    let labels: [(u32, &str, ratatui::style::Color); 4] = [
+        (cd, "CD completed", theme.completed),
+        (f, "F failed", theme.failed),
+        (to, "TO timeout", theme.failed),
+        (ca, "CA cancelled", theme.cancelled),
+    ];
+    let mut first = true;
+    for (count, lbl, color) in labels {
+        if count == 0 {
+            continue;
+        }
+        if !first {
+            legend.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        }
+        legend.push(Span::styled(
+            format!("{count} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        legend.push(Span::styled(lbl, Style::default().fg(theme.muted)));
+        first = false;
+    }
+    lines.push(Line::from(legend));
+}
+
+/// Four horizontal bars on a shared scale showing min / p50 / max / suggest
+/// runtimes. The suggested padding sits visually relative to the historical
+/// max so users see how much headroom it adds.
+fn runtime_range_lines<'a>(
+    min: u64,
+    p50: u64,
+    max: u64,
+    suggest: u64,
+    scale: u64,
+    theme: &Theme,
+    lines: &mut Vec<Line<'a>>,
+) {
+    let bar_w: usize = 30;
+    let render_bar = |value: u64, label: &str, color: ratatui::style::Color| -> Line<'a> {
+        let filled = ((value as f64 / scale as f64) * bar_w as f64).round() as usize;
+        let fill = "▰".repeat(filled.min(bar_w));
+        let empty = "▱".repeat(bar_w.saturating_sub(filled));
+        Line::from(vec![
+            Span::styled(format!("  {label:<10}"), Style::default().fg(theme.muted)),
+            Span::styled(fill, Style::default().fg(color)),
+            Span::styled(empty, Style::default().fg(theme.border)),
+            Span::styled(
+                format!(" {}", humanize_dur(value)),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    };
+
+    lines.push(Line::from(Span::styled(
+        "  runtime",
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(render_bar(min, "min", theme.usage_low));
+    lines.push(render_bar(p50, "p50", theme.usage_med));
+    lines.push(render_bar(max, "max", theme.usage_high));
+    lines.push(render_bar(suggest, "suggest", theme.accent));
 }
