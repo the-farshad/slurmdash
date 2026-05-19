@@ -362,6 +362,7 @@ fn render_statistics(frame: &mut ratatui::Frame<'_>, area: Rect, state: &AppStat
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(4),         // KPI strip (single-row chip bar)
             Constraint::Length(3),         // sparkline trend strip
             Constraint::Length(7),         // resources (left) + wait histogram (right)
             Constraint::Length(part_rows), // partitions
@@ -369,17 +370,18 @@ fn render_statistics(frame: &mut ratatui::Frame<'_>, area: Rect, state: &AppStat
         ])
         .split(area);
 
-    widgets::sparkline::render(frame, chunks[0], &state.resource_history, theme);
+    widgets::kpi::render(frame, chunks[0], &state.all_jobs, &state.resources, theme);
+    widgets::sparkline::render(frame, chunks[1], &state.resource_history, theme);
 
     let row2 = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+        .split(chunks[2]);
     widgets::resources::render(frame, row2[0], &state.resources, theme);
     widgets::wait_distribution::render(frame, row2[1], &state.all_jobs, theme);
 
-    widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
-    widgets::top_users::render(frame, chunks[3], &state.all_jobs, theme);
+    widgets::partitions::render(frame, chunks[3], &state.partitions, theme);
+    widgets::top_users::render(frame, chunks[4], &state.all_jobs, theme);
 }
 
 /// Three-stack dashboard: top row (resources + queue + ending-soon),

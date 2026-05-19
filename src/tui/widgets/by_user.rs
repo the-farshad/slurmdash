@@ -68,9 +68,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
 
     for (i, (user, count, sum_wait, wait_samples)) in entries.iter().take(rows).enumerate() {
         let pct = (*count as f64) / (max as f64);
-        let filled = (pct * bar_w as f64).round() as usize;
-        let fill: String = "▰".repeat(filled);
-        let empty: String = "▱".repeat(bar_w.saturating_sub(filled));
+        let (fill, empty) = super::braille::bar_pair(pct, bar_w);
         let wait_label = if *wait_samples > 0 {
             format!(" ·{:>5}", short_dur(sum_wait / *wait_samples as u64))
         } else {

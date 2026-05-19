@@ -234,12 +234,12 @@ fn outcomes_lines<'a>(
         if w == 0 {
             continue;
         }
-        spans.push(Span::styled("▰".repeat(w), Style::default().fg(*color)));
+        spans.push(Span::styled("⣿".repeat(w), Style::default().fg(*color)));
         used += w;
     }
     if used < bar_width {
         spans.push(Span::styled(
-            "▱".repeat(bar_width - used),
+            "⣀".repeat(bar_width - used),
             Style::default().fg(theme.border),
         ));
     }
@@ -372,9 +372,12 @@ fn make_range_bar<'a>(
     bar_w: usize,
     theme: &Theme,
 ) -> Line<'a> {
-    let filled = ((value as f64 / scale as f64) * bar_w as f64).round() as usize;
-    let fill = "▰".repeat(filled.min(bar_w));
-    let empty = "▱".repeat(bar_w.saturating_sub(filled));
+    let pct = if scale == 0 {
+        0.0
+    } else {
+        (value as f64 / scale as f64).clamp(0.0, 1.0)
+    };
+    let (fill, empty) = super::braille::bar_pair(pct, bar_w);
     Line::from(vec![
         Span::styled(format!("  {label:<10}"), Style::default().fg(theme.muted)),
         Span::styled(fill, Style::default().fg(color)),

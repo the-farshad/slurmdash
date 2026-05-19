@@ -103,9 +103,7 @@ fn render_row(frame: &mut Frame<'_>, area: Rect, p: &Partition, theme: &Theme) {
 fn bar_segment<'a>(label: &'a str, pct: f64, bar_w: usize, theme: &Theme) -> Vec<Span<'a>> {
     let color = gradient(pct, theme);
     let inner = bar_w.saturating_sub(label.len() + 6);
-    let filled = (pct * inner as f64).round() as usize;
-    let fill: String = "▰".repeat(filled);
-    let empty: String = "▱".repeat(inner.saturating_sub(filled));
+    let (fill, empty) = super::braille::bar_pair(pct, inner);
     vec![
         Span::styled(format!("{label} "), theme.footer_style()),
         Span::styled(fill, Style::default().fg(color)),

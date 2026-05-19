@@ -72,9 +72,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
         .take(inner.height.saturating_sub(1) as usize)
         .map(|(user, s)| {
             let pct = (s.total as f64) / max_total;
-            let filled = (pct * bar_w_chars as f64).round() as usize;
-            let fill = "▰".repeat(filled);
-            let empty = "▱".repeat(bar_w_chars - filled);
+            let (fill, empty) = super::braille::bar_pair(pct, bar_w_chars);
             let wait = if s.wait_n > 0 {
                 short_dur(s.wait_sum / s.wait_n as u64)
             } else {

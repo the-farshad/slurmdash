@@ -1,4 +1,5 @@
 pub mod assist;
+pub mod braille;
 pub mod by_node;
 pub mod by_user;
 pub mod confirm;
@@ -9,6 +10,7 @@ pub mod footer;
 pub mod header;
 pub mod help;
 pub mod job_table;
+pub mod kpi;
 pub mod log_viewer;
 pub mod partitions;
 pub mod progress;
