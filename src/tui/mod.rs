@@ -524,6 +524,30 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
 }
 
 fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
+    // Vim/less-style page navigation aliases:
+    //   Ctrl+U / Ctrl+D — half-page (5 rows)
+    //   Ctrl+B / Ctrl+F — full page (10 rows)
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('u') => {
+                state.select_page_up(5);
+                return Intent::None;
+            }
+            KeyCode::Char('d') => {
+                state.select_page_down(5);
+                return Intent::None;
+            }
+            KeyCode::Char('b') => {
+                state.select_page_up(10);
+                return Intent::None;
+            }
+            KeyCode::Char('f') => {
+                state.select_page_down(10);
+                return Intent::None;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Char('q') => {
             state.should_quit = true;

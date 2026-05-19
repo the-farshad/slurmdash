@@ -1,14 +1,43 @@
-//! KV settings stored in the `settings` table (JSON values).
-//! Phase 1 stub.
+//! Simple JSON-valued KV store backed by the `settings` table.
+//!
+//! Used today for the "last connected host" so users don't have to retype
+//! `--host my-alias` on every launch. The schema accepts arbitrary JSON
+//! values so future preferences (last sort column, last group_by, etc.)
+//! can pile on without migrations.
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
-pub async fn get(_key: &str) -> Result<Option<serde_json::Value>> {
-    Ok(None)
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct LastConnection {
+    pub host: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub ssh_key: Option<String>,
+    pub cluster_profile: Option<String>,
 }
 
-#[allow(dead_code)]
-pub async fn put(_key: &str, _value: &serde_json::Value) -> Result<()> {
+pub async fn put_last_connection(pool: &sqlx::SqlitePool, value: &LastConnection) -> Result<()> {
+    let json = serde_json::to_string(value)?;
+    sqlx::query(
+        "INSERT INTO settings (key, value_json, updated_at) \
+         VALUES ('last_connection', ?, datetime('now')) \
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, \
+         updated_at = datetime('now')",
+    )
+    .bind(json)
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+pub async fn get_last_connection(pool: &sqlx::SqlitePool) -> Result<Option<LastConnection>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value_json FROM settings WHERE key = 'last_connection'")
+            .fetch_optional(pool)
+            .await?;
+    match row {
+        Some((json,)) => Ok(Some(serde_json::from_str(&json)?)),
+        None => Ok(None),
+    }
 }

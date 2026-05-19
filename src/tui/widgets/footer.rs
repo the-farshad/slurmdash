@@ -89,7 +89,7 @@ const JOBS_HINTS: [Hint; 16] = [
         kind: HintKind::Normal,
     },
     Hint {
-        key: "PgU/D",
+        key: "PgUp·PgDn",
         label: "page",
         kind: HintKind::Normal,
     },
@@ -144,7 +144,7 @@ const JOBS_HINTS: [Hint; 16] = [
         kind: HintKind::Normal,
     },
     Hint {
-        key: "^K",
+        key: "Ctrl+K",
         label: "assist",
         kind: HintKind::Special,
     },
@@ -180,7 +180,7 @@ const LOGS_HINTS: [Hint; 9] = [
         kind: HintKind::Normal,
     },
     Hint {
-        key: "PgU/D",
+        key: "PgUp·PgDn",
         label: "page",
         kind: HintKind::Normal,
     },

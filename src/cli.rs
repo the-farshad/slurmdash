@@ -229,6 +229,35 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         )
     };
 
+    // If the user provided no connection info on the CLI AND has no
+    // cluster profiles in config.toml, fall back to whatever they
+    // connected to last time (persisted in the settings table).
+    if cli.host.is_none()
+        && cli.user.is_none()
+        && cli.cluster.is_none()
+        && config.clusters.is_empty()
+    {
+        if let Some(d) = &db {
+            if let Ok(Some(last)) = crate::db::settings::get_last_connection(&d.pool).await {
+                if cli.host.is_none() {
+                    cli.host = last.host;
+                }
+                if cli.user.is_none() {
+                    cli.user = last.user;
+                }
+                if cli.port.is_none() {
+                    cli.port = last.port;
+                }
+                if cli.ssh_key.is_none() {
+                    cli.ssh_key = last.ssh_key.map(std::path::PathBuf::from);
+                }
+                if cli.cluster.is_none() {
+                    cli.cluster = last.cluster_profile;
+                }
+            }
+        }
+    }
+
     let command = cli.command.take();
     match command {
         Some(Command::Db { cmd }) => handle_db(cmd, db).await,
@@ -309,7 +338,29 @@ async fn launch_tui(
     db: Option<crate::db::Db>,
 ) -> Result<()> {
     let handle = crate::ssh::build_runner(&cli, &config).await?;
+    remember_connection(db.as_ref(), &cli).await;
     crate::tui::run(cli, config, handle, db).await
+}
+
+/// Persist the connection details the user just successfully used so the
+/// next invocation can run with no `--host` / `--cluster` flags.
+async fn remember_connection(db: Option<&crate::db::Db>, cli: &Cli) {
+    let Some(d) = db else { return };
+    let any_supplied =
+        cli.host.is_some() || cli.user.is_some() || cli.cluster.is_some() || cli.ssh_key.is_some();
+    if !any_supplied {
+        return;
+    }
+    let value = crate::db::settings::LastConnection {
+        host: cli.host.clone(),
+        user: cli.user.clone(),
+        port: cli.port,
+        ssh_key: cli.ssh_key.as_ref().map(|p| p.display().to_string()),
+        cluster_profile: cli.cluster.clone(),
+    };
+    if let Err(e) = crate::db::settings::put_last_connection(&d.pool, &value).await {
+        tracing::warn!(error = %e, "failed to save last_connection");
+    }
 }
 
 /// Build a one-paragraph history summary for the selected job's name (if

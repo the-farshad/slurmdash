@@ -188,8 +188,20 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String])
         j.job_id.clone()
     };
 
+    // JOBID gets the accent color so the eye finds rows quickly. If a
+    // highlight term matches inside, those substrings still get the
+    // higher-contrast highlight style.
+    let id_spans = if terms.is_empty() {
+        vec![Span::styled(
+            id_text.clone(),
+            Style::default().fg(theme.accent),
+        )]
+    } else {
+        highlight_spans(&id_text, terms, theme)
+    };
+
     Row::new(vec![
-        Cell::from(Line::from(highlight_spans(&id_text, terms, theme))),
+        Cell::from(Line::from(id_spans)),
         Cell::from(Line::from(highlight_spans(&j.partition, terms, theme))),
         Cell::from(Line::from(highlight_spans(&j.name, terms, theme))),
         Cell::from(Line::from(highlight_spans(&j.user, terms, theme))),
