@@ -55,25 +55,45 @@ pub trait Runner: Send + Sync {
     fn description(&self) -> String;
 }
 
+/// A connected runner plus enough metadata for the DB layer to key snapshots
+/// and audit-log entries by cluster.
+pub struct RunnerHandle {
+    pub runner: Box<dyn Runner>,
+    pub cluster_name: String,
+    pub is_local: bool,
+}
+
 /// Construct a runner for the cluster selected by CLI flags + config.
-pub async fn build_runner(cli: &Cli, config: &Config) -> Result<Box<dyn Runner>> {
-    let profile = if cli.host.is_some() || cli.user.is_some() {
-        ClusterProfile {
+pub async fn build_runner(cli: &Cli, config: &Config) -> Result<RunnerHandle> {
+    let (profile, name) = if cli.host.is_some() || cli.user.is_some() {
+        let p = ClusterProfile {
             local: false,
             host: cli.host.clone(),
             user: cli.user.clone(),
             port: cli.port,
             ssh_key: cli.ssh_key.clone(),
             ..Default::default()
-        }
+        };
+        let name = match (&p.user, &p.host) {
+            (Some(u), Some(h)) => format!("{u}@{h}"),
+            (None, Some(h)) => h.clone(),
+            _ => "remote".to_string(),
+        };
+        (p, name)
     } else {
-        config
+        let name = cli.cluster.clone().unwrap_or_else(|| "default".to_string());
+        let profile = config
             .resolve_cluster(cli.cluster.as_deref())
-            .context("resolving cluster profile")?
+            .context("resolving cluster profile")?;
+        (profile, name)
     };
 
     if profile.local {
-        return Ok(Box::new(local::LocalRunner::new()));
+        return Ok(RunnerHandle {
+            runner: Box::new(local::LocalRunner::new()),
+            cluster_name: name,
+            is_local: true,
+        });
     }
 
     let host = profile
@@ -82,5 +102,9 @@ pub async fn build_runner(cli: &Cli, config: &Config) -> Result<Box<dyn Runner>>
         .context("cluster profile has no `host` and is not marked `local = true`")?;
 
     let runner = remote::RemoteRunner::connect(&host, profile).await?;
-    Ok(Box::new(runner))
+    Ok(RunnerHandle {
+        runner: Box::new(runner),
+        cluster_name: name,
+        is_local: false,
+    })
 }

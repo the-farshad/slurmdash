@@ -188,30 +188,10 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
     match command {
         Some(Command::Db { cmd }) => handle_db(cmd, db).await,
 
-        Some(Command::Cancel { job_id }) => {
-            let runner = crate::ssh::build_runner(&cli, &config).await?;
-            crate::slurm::scancel::cancel(runner.as_ref(), &job_id).await?;
-            println!("cancelled {job_id}");
-            Ok(())
-        }
-        Some(Command::Hold { job_id }) => {
-            let runner = crate::ssh::build_runner(&cli, &config).await?;
-            crate::slurm::scontrol::hold(runner.as_ref(), &job_id).await?;
-            println!("held {job_id}");
-            Ok(())
-        }
-        Some(Command::Release { job_id }) => {
-            let runner = crate::ssh::build_runner(&cli, &config).await?;
-            crate::slurm::scontrol::release(runner.as_ref(), &job_id).await?;
-            println!("released {job_id}");
-            Ok(())
-        }
-        Some(Command::Requeue { job_id }) => {
-            let runner = crate::ssh::build_runner(&cli, &config).await?;
-            crate::slurm::scontrol::requeue(runner.as_ref(), &job_id).await?;
-            println!("requeued {job_id}");
-            Ok(())
-        }
+        Some(Command::Cancel { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Cancel).await,
+        Some(Command::Hold { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Hold).await,
+        Some(Command::Release { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Release).await,
+        Some(Command::Requeue { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Requeue).await,
         Some(Command::Logs { .. })
         | Some(Command::Submit { .. })
         | Some(Command::History { .. })
@@ -233,8 +213,30 @@ async fn launch_tui(
     config: crate::config::Config,
     db: Option<crate::db::Db>,
 ) -> Result<()> {
-    let runner = crate::ssh::build_runner(&cli, &config).await?;
-    crate::tui::run(cli, config, runner, db).await
+    let handle = crate::ssh::build_runner(&cli, &config).await?;
+    crate::tui::run(cli, config, handle, db).await
+}
+
+async fn run_action(
+    cli: &Cli,
+    config: &crate::config::Config,
+    db: Option<crate::db::Db>,
+    job_id: &str,
+    kind: crate::actions::ActionKind,
+) -> Result<()> {
+    let handle = crate::ssh::build_runner(cli, config).await?;
+    crate::actions::run(
+        kind,
+        job_id,
+        handle.runner.as_ref(),
+        db.as_ref(),
+        &handle.cluster_name,
+        handle.is_local,
+        true,
+    )
+    .await?;
+    println!("{} {}", kind.label(), job_id);
+    Ok(())
 }
 
 async fn handle_db(cmd: DbCommand, db: Option<crate::db::Db>) -> Result<()> {

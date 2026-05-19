@@ -1,15 +1,14 @@
-//! Application state and event loop.
-//!
-//! Phase 1: minimal — owns the job list, selected row, view enum, and
-//! refresh policy. Built out alongside the TUI widgets in Phase 1.6 / 1.7.
-
-use crate::slurm::model::Job;
+use crate::actions::ActionKind;
+use crate::slurm::model::{Job, JobDetails};
 
 #[derive(Debug, Default)]
 pub struct AppState {
     pub jobs: Vec<Job>,
     pub selected: usize,
     pub view: View,
+    pub details: Option<JobDetails>,
+    pub confirm: Option<Confirm>,
+    pub show_help: bool,
     pub last_error: Option<String>,
     pub should_quit: bool,
 }
@@ -19,7 +18,13 @@ pub enum View {
     #[default]
     Jobs,
     Details,
-    Help,
+}
+
+#[derive(Debug, Clone)]
+pub struct Confirm {
+    pub kind: ActionKind,
+    pub job_id: String,
+    pub preview: String,
 }
 
 impl AppState {
