@@ -121,19 +121,24 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             theme.header_style().add_modifier(Modifier::BOLD),
         )));
 
-        // Summary line.
-        lines.push(Line::from(vec![
+        // Summary line + last-seen.
+        let mut summary_spans: Vec<Span<'_>> = vec![
             Span::styled("  runs       ", muted_style),
             Span::styled(format!("{}", stats.runs), Style::default().fg(theme.accent)),
-        ]));
+        ];
+        if let Some(seen) = stats.last_seen {
+            summary_spans.push(Span::styled(
+                format!("   · last seen {}", seen.format("%Y-%m-%d %H:%M")),
+                muted_style,
+            ));
+        }
+        lines.push(Line::from(summary_spans));
 
         // Outcomes bar — color-coded stacked bar with counts.
         let bar_width: usize = 30;
         outcomes_lines(stats, bar_width, theme, &mut lines);
 
-        // Runtime range — min / p50 / max as horizontal bars on a shared
-        // scale. The "suggest --time" value extends the scale so users can
-        // visually compare it with the historical max.
+        // Runtime range — min / p50 / max + 5%-padded suggest.
         if let (Some(min), Some(p50), Some(max)) = (
             stats.elapsed_min_seconds,
             stats.elapsed_p50_seconds,
@@ -142,6 +147,29 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             let suggest = max + max / 20;
             let scale = suggest.max(1);
             runtime_range_lines(min, p50, max, suggest, scale, theme, &mut lines);
+        }
+
+        // Wait range — same idea on a separate scale, only when we have
+        // submit/start data persisted from squeue.
+        if let (Some(min), Some(p50), Some(max)) = (
+            stats.wait_min_seconds,
+            stats.wait_p50_seconds,
+            stats.wait_max_seconds,
+        ) {
+            wait_range_lines(min, p50, max, theme, &mut lines);
+        }
+
+        // Recent runs chip strip — most recent first, colored by terminal
+        // state. Wraps automatically inside the paragraph.
+        if !stats.recent.is_empty() {
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "  recent",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            recent_chip_lines(&stats.recent, theme, &mut lines);
         }
     }
 
@@ -260,29 +288,121 @@ fn runtime_range_lines<'a>(
     lines: &mut Vec<Line<'a>>,
 ) {
     let bar_w: usize = 30;
-    let render_bar = |value: u64, label: &str, color: ratatui::style::Color| -> Line<'a> {
-        let filled = ((value as f64 / scale as f64) * bar_w as f64).round() as usize;
-        let fill = "▰".repeat(filled.min(bar_w));
-        let empty = "▱".repeat(bar_w.saturating_sub(filled));
-        Line::from(vec![
-            Span::styled(format!("  {label:<10}"), Style::default().fg(theme.muted)),
-            Span::styled(fill, Style::default().fg(color)),
-            Span::styled(empty, Style::default().fg(theme.border)),
-            Span::styled(
-                format!(" {}", humanize_dur(value)),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ])
-    };
-
     lines.push(Line::from(Span::styled(
         "  runtime",
         Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )));
-    lines.push(render_bar(min, "min", theme.usage_low));
-    lines.push(render_bar(p50, "p50", theme.usage_med));
-    lines.push(render_bar(max, "max", theme.usage_high));
-    lines.push(render_bar(suggest, "suggest", theme.accent));
+    lines.push(make_range_bar(
+        min,
+        "min",
+        theme.usage_low,
+        scale,
+        bar_w,
+        theme,
+    ));
+    lines.push(make_range_bar(
+        p50,
+        "p50",
+        theme.usage_med,
+        scale,
+        bar_w,
+        theme,
+    ));
+    lines.push(make_range_bar(
+        max,
+        "max",
+        theme.usage_high,
+        scale,
+        bar_w,
+        theme,
+    ));
+    lines.push(make_range_bar(
+        suggest,
+        "suggest",
+        theme.accent,
+        scale,
+        bar_w,
+        theme,
+    ));
+}
+
+fn wait_range_lines<'a>(min: u64, p50: u64, max: u64, theme: &Theme, lines: &mut Vec<Line<'a>>) {
+    let bar_w: usize = 30;
+    let scale = max.max(1);
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "  wait",
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(make_range_bar(
+        min,
+        "min",
+        theme.usage_low,
+        scale,
+        bar_w,
+        theme,
+    ));
+    lines.push(make_range_bar(
+        p50,
+        "p50",
+        theme.usage_med,
+        scale,
+        bar_w,
+        theme,
+    ));
+    lines.push(make_range_bar(
+        max,
+        "max",
+        theme.usage_high,
+        scale,
+        bar_w,
+        theme,
+    ));
+}
+
+fn make_range_bar<'a>(
+    value: u64,
+    label: &str,
+    color: ratatui::style::Color,
+    scale: u64,
+    bar_w: usize,
+    theme: &Theme,
+) -> Line<'a> {
+    let filled = ((value as f64 / scale as f64) * bar_w as f64).round() as usize;
+    let fill = "▰".repeat(filled.min(bar_w));
+    let empty = "▱".repeat(bar_w.saturating_sub(filled));
+    Line::from(vec![
+        Span::styled(format!("  {label:<10}"), Style::default().fg(theme.muted)),
+        Span::styled(fill, Style::default().fg(color)),
+        Span::styled(empty, Style::default().fg(theme.border)),
+        Span::styled(
+            format!(" {}", humanize_dur(value)),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+/// Up to 12 recent runs rendered as colored chips, most recent first.
+fn recent_chip_lines<'a>(
+    runs: &[crate::history::RecentRun],
+    theme: &Theme,
+    lines: &mut Vec<Line<'a>>,
+) {
+    use crate::slurm::state::JobState;
+    let mut spans: Vec<Span<'_>> = vec![Span::raw("  ")];
+    for r in runs {
+        let st = JobState::parse(&r.state);
+        let style = theme.job_state_style(&st);
+        let elapsed = r
+            .elapsed_seconds
+            .map(crate::tui::format::hms)
+            .unwrap_or_else(|| "-".into());
+        let chip = format!("[{} {}] ", st.short(), elapsed);
+        spans.push(Span::styled(chip, style));
+    }
+    lines.push(Line::from(spans));
 }

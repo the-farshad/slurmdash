@@ -86,38 +86,41 @@ fn render_group_row<'a>(
     theme: &Theme,
 ) -> Row<'a> {
     let arrow = if collapsed { "▶" } else { "▼" };
-    let count = summary.count;
+    let bold_accent = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(theme.muted);
+    let border = Style::default().fg(theme.border);
 
-    // Header cell: arrow + key + total count.
-    let mut spans = vec![
-        Span::styled(
-            format!(" {arrow}  "),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{key:<14.14}"),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{count:>3} {}", if count == 1 { "job " } else { "jobs" }),
-            Style::default().fg(theme.muted),
-        ),
-        Span::raw("   "),
-    ];
+    // JOBID column: arrow + group key + " (kind)" suffix.
+    let jobid_text = format!("{arrow} {key} ({})", kind.label());
+    let jobid_cell = Cell::from(Span::styled(jobid_text, bold_accent));
 
-    // Node count.
-    if summary.nodes_total > 0 {
-        spans.push(Span::styled(
-            format!("{:>3}N ", summary.nodes_total),
-            Style::default().fg(theme.muted),
-        ));
-    }
+    // PART column: actual partition if all members share one, else "N parts".
+    let part_text = match (kind, summary.distinct_partitions) {
+        (GroupBy::Partition, _) => String::new(), // it IS the grouping field
+        (_, 0) => String::new(),
+        (_, 1) => summary.sample_partition.clone().unwrap_or_default(),
+        (_, n) => format!("{n} parts"),
+    };
 
-    // State breakdown — only render non-zero buckets, in priority order.
+    // NAME column: similar.
+    let name_text = match summary.distinct_names {
+        0 => String::new(),
+        1 => summary.sample_name.clone().unwrap_or_default(),
+        n => format!("{n} names"),
+    };
+
+    // USER column: actual user if all same, else count.
+    let user_text = match (kind, summary.distinct_users) {
+        (GroupBy::User, _) => String::new(),
+        (_, 0) => String::new(),
+        (_, 1) => summary.sample_user.clone().unwrap_or_default(),
+        (_, n) => format!("{n} users"),
+    };
+
+    // ST column: state breakdown chips (R/PD/F/etc.) concatenated.
+    let mut st_spans: Vec<Span<'_>> = Vec::new();
     let state_chips: [(u32, &str, ratatui::style::Color); 6] = [
         (summary.running, "R", theme.running),
         (summary.pending, "PD", theme.pending),
@@ -126,40 +129,64 @@ fn render_group_row<'a>(
         (summary.failed, "F", theme.failed),
         (summary.completed, "CD", theme.completed),
     ];
+    let mut first = true;
     for (n, label, color) in state_chips {
         if n == 0 {
             continue;
         }
-        spans.push(Span::styled(
-            format!("{n}{label} "),
+        if !first {
+            st_spans.push(Span::styled(" ", muted));
+        }
+        st_spans.push(Span::styled(
+            format!("{n}{label}"),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
+        first = false;
+    }
+    if st_spans.is_empty() {
+        st_spans.push(Span::styled(format!("{}", summary.count), bold_accent));
     }
 
-    // Average wait.
-    if let Some(w) = summary.avg_wait_seconds {
-        spans.push(Span::styled(
-            format!("· ~{} wait ", short_dur(w)),
-            Style::default().fg(theme.muted),
-        ));
-    }
-
-    spans.push(Span::styled(
-        format!("({})", kind.label()),
-        Style::default().fg(theme.border),
-    ));
+    // ELAPSED: sum.
+    let elapsed_text = if summary.elapsed_total_seconds > 0 {
+        format!(
+            "Σ {}",
+            crate::tui::format::hms(summary.elapsed_total_seconds)
+        )
+    } else {
+        String::new()
+    };
+    // LIMIT: max.
+    let limit_text = if summary.limit_max_seconds > 0 {
+        format!("≤ {}", crate::tui::format::hms(summary.limit_max_seconds))
+    } else {
+        String::new()
+    };
+    // WAIT: avg.
+    let wait_text = summary
+        .avg_wait_seconds
+        .map(|w| format!("~{}", short_dur(w)))
+        .unwrap_or_default();
+    // N: total nodes.
+    let nodes_text = if summary.nodes_total > 0 {
+        format!("Σ{}", summary.nodes_total)
+    } else {
+        String::new()
+    };
+    // REASON: count of jobs as a subtle summary marker.
+    let reason_text = format!("{} jobs", summary.count);
 
     Row::new(vec![
-        Cell::from(ratatui::text::Line::from(spans)),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
-        Cell::from(""),
+        jobid_cell,
+        Cell::from(Span::styled(part_text, muted)),
+        Cell::from(Span::styled(name_text, muted)),
+        Cell::from(Span::styled(user_text, muted)),
+        Cell::from(ratatui::text::Line::from(st_spans)),
+        Cell::from(Span::styled(elapsed_text, muted)),
+        Cell::from(Span::styled(limit_text, muted)),
+        Cell::from(Span::styled(wait_text, muted)),
+        Cell::from(Span::styled(nodes_text, muted)),
+        Cell::from(Span::styled(reason_text, border)),
     ])
 }
 

@@ -144,21 +144,34 @@ pub enum DisplayRow {
 }
 
 /// Aggregate statistics for a group of jobs, rendered inline on the group
-/// header row.
+/// header row. Each column of the table gets a corresponding aggregate
+/// (count / sum / max / distinct), so the header reads like a spreadsheet
+/// totals row.
 #[derive(Debug, Clone, Default)]
 pub struct GroupSummary {
     pub count: u32,
-    /// Total node count across all jobs in this group.
     pub nodes_total: u32,
-    /// State distribution — the top two states populate the header chip.
+    pub elapsed_total_seconds: u64,
+    pub limit_max_seconds: u64,
+    pub avg_wait_seconds: Option<u64>,
+
+    /// Distinct value counts per column.
+    pub distinct_partitions: u32,
+    pub distinct_users: u32,
+    pub distinct_names: u32,
+    /// First (alphabetical) sample, used when distinct=1 so we can show
+    /// the actual value rather than a count.
+    pub sample_partition: Option<String>,
+    pub sample_user: Option<String>,
+    pub sample_name: Option<String>,
+
+    /// State distribution chips.
     pub running: u32,
     pub pending: u32,
     pub failed: u32,
     pub completing: u32,
     pub held: u32,
     pub completed: u32,
-    /// Average wait time across jobs that have a known wait.
-    pub avg_wait_seconds: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -498,10 +511,20 @@ fn build_summary(jobs: &[Job], member_indices: &[usize]) -> GroupSummary {
     let mut s = GroupSummary::default();
     let mut wait_sum: u64 = 0;
     let mut wait_n: u32 = 0;
+    let mut partitions: HashSet<String> = HashSet::new();
+    let mut users: HashSet<String> = HashSet::new();
+    let mut names: HashSet<String> = HashSet::new();
     for idx in member_indices {
         let Some(j) = jobs.get(*idx) else { continue };
         s.count += 1;
         s.nodes_total = s.nodes_total.saturating_add(j.nodes);
+        s.elapsed_total_seconds = s
+            .elapsed_total_seconds
+            .saturating_add(j.elapsed_seconds.unwrap_or(0));
+        s.limit_max_seconds = s.limit_max_seconds.max(j.time_limit_seconds.unwrap_or(0));
+        partitions.insert(j.partition.clone());
+        users.insert(j.user.clone());
+        names.insert(j.name.clone());
         match j.state {
             JobState::Running => s.running += 1,
             JobState::Pending => s.pending += 1,
@@ -524,6 +547,12 @@ fn build_summary(jobs: &[Job], member_indices: &[usize]) -> GroupSummary {
     if wait_n > 0 {
         s.avg_wait_seconds = Some(wait_sum / wait_n as u64);
     }
+    s.distinct_partitions = partitions.len() as u32;
+    s.distinct_users = users.len() as u32;
+    s.distinct_names = names.len() as u32;
+    s.sample_partition = partitions.into_iter().next();
+    s.sample_user = users.into_iter().next();
+    s.sample_name = names.into_iter().next();
     s
 }
 

@@ -18,11 +18,25 @@ pub struct JobNameStats {
     pub elapsed_min_seconds: Option<u64>,
     pub elapsed_max_seconds: Option<u64>,
     pub elapsed_p50_seconds: Option<u64>,
+    pub wait_min_seconds: Option<u64>,
+    pub wait_max_seconds: Option<u64>,
+    pub wait_p50_seconds: Option<u64>,
     pub failures: u32,
     pub timeouts: u32,
     pub cancellations: u32,
     pub completions: u32,
     pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    /// Recent runs (up to 12), most recent first.
+    pub recent: Vec<RecentRun>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecentRun {
+    pub job_id: String,
+    pub state: String,
+    pub elapsed_seconds: Option<u64>,
+    pub wait_seconds: Option<u64>,
+    pub captured_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -33,21 +47,32 @@ pub struct PartitionPressure {
     pub samples: u32,
 }
 
-/// Roll up walltime + terminal-state stats per job name for a cluster over
-/// the trailing `since_days` days.
+/// Roll up walltime + wait + terminal-state stats per job name for a
+/// cluster over the trailing `since_days` days. Also collects up to 12
+/// recent runs per name for the details-panel chip strip.
+type JobNameRow = (
+    String,         // job_name
+    String,         // job_id
+    Option<i64>,    // elapsed_seconds
+    Option<String>, // submit_time
+    Option<String>, // start_time
+    String,         // state
+    String,         // captured_at
+);
+
 pub async fn job_name_stats(
     pool: &SqlitePool,
     cluster_id: i64,
     since_days: i64,
 ) -> Result<Vec<JobNameStats>> {
-    // First: terminal state per (cluster, job_id) — last seen state for a
-    // job that has disappeared from squeue.
-    let rows: Vec<(String, String, Option<i64>, String, String)> = sqlx::query_as(
+    let rows: Vec<JobNameRow> = sqlx::query_as(
         r#"
         SELECT
             job_name,
             job_id,
             elapsed_seconds,
+            submit_time,
+            start_time,
             state,
             MAX(captured_at) AS captured_at
         FROM job_snapshots
@@ -62,13 +87,16 @@ pub async fn job_name_stats(
     .fetch_all(pool)
     .await?;
 
-    // Then: aggregate per job_name.
     let mut by_name: std::collections::BTreeMap<String, JobNameStats> =
         std::collections::BTreeMap::new();
     let mut elapsed_buckets: std::collections::BTreeMap<String, Vec<u64>> =
         std::collections::BTreeMap::new();
+    let mut wait_buckets: std::collections::BTreeMap<String, Vec<u64>> =
+        std::collections::BTreeMap::new();
+    let mut recent_buckets: std::collections::BTreeMap<String, Vec<RecentRun>> =
+        std::collections::BTreeMap::new();
 
-    for (name, _job_id, elapsed, state, captured_at) in rows {
+    for (name, job_id, elapsed, submit_time, start_time, state, captured_at) in rows {
         let entry = by_name.entry(name.clone()).or_insert_with(|| JobNameStats {
             job_name: name.clone(),
             ..Default::default()
@@ -81,36 +109,82 @@ pub async fn job_name_stats(
             "CD" | "COMPLETED" => entry.completions += 1,
             _ => {}
         }
-        if let Some(seen) = chrono::DateTime::parse_from_rfc3339(&captured_at)
+        let captured_dt = chrono::DateTime::parse_from_rfc3339(&captured_at)
             .ok()
-            .map(|t| t.with_timezone(&chrono::Utc))
-        {
+            .map(|t| t.with_timezone(&chrono::Utc));
+        if let Some(seen) = captured_dt {
             entry.last_seen = Some(match entry.last_seen {
                 Some(prev) if prev > seen => prev,
                 _ => seen,
             });
         }
-        if let Some(e) = elapsed {
-            if e > 0 {
-                let e = e as u64;
-                elapsed_buckets.entry(name).or_default().push(e);
-            }
+        let elapsed_u = elapsed.and_then(|e| if e > 0 { Some(e as u64) } else { None });
+        if let Some(e) = elapsed_u {
+            elapsed_buckets.entry(name.clone()).or_default().push(e);
         }
+        let wait_u = match (
+            submit_time.as_deref().and_then(parse_dt),
+            start_time.as_deref().and_then(parse_dt),
+        ) {
+            (Some(s), Some(t)) if t >= s => Some((t - s).num_seconds() as u64),
+            _ => None,
+        };
+        if let Some(w) = wait_u {
+            wait_buckets.entry(name.clone()).or_default().push(w);
+        }
+        recent_buckets.entry(name).or_default().push(RecentRun {
+            job_id,
+            state,
+            elapsed_seconds: elapsed_u,
+            wait_seconds: wait_u,
+            captured_at: captured_dt,
+        });
+    }
+
+    fn fill_percentiles(target: &mut JobNameStats, samples: &mut [u64]) {
+        if samples.is_empty() {
+            return;
+        }
+        samples.sort_unstable();
+        target.elapsed_min_seconds = samples.first().copied();
+        target.elapsed_max_seconds = samples.last().copied();
+        let mid = samples.len() / 2;
+        target.elapsed_p50_seconds = Some(samples[mid]);
     }
 
     for (name, mut samples) in elapsed_buckets {
         if let Some(entry) = by_name.get_mut(&name) {
+            fill_percentiles(entry, &mut samples);
+        }
+    }
+
+    for (name, mut samples) in wait_buckets {
+        if let Some(entry) = by_name.get_mut(&name) {
             samples.sort_unstable();
-            entry.elapsed_min_seconds = samples.first().copied();
-            entry.elapsed_max_seconds = samples.last().copied();
+            entry.wait_min_seconds = samples.first().copied();
+            entry.wait_max_seconds = samples.last().copied();
             let mid = samples.len() / 2;
-            entry.elapsed_p50_seconds = Some(samples[mid]);
+            entry.wait_p50_seconds = Some(samples[mid]);
+        }
+    }
+
+    for (name, mut runs) in recent_buckets {
+        if let Some(entry) = by_name.get_mut(&name) {
+            runs.sort_by_key(|r| std::cmp::Reverse(r.captured_at));
+            runs.truncate(12);
+            entry.recent = runs;
         }
     }
 
     let mut out: Vec<JobNameStats> = by_name.into_values().collect();
     out.sort_by_key(|s| std::cmp::Reverse(s.runs));
     Ok(out)
+}
+
+fn parse_dt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
 }
 
 /// Stats for a specific job name (or empty when no rows match).
