@@ -22,37 +22,79 @@ avoid that collision.
 
 ---
 
-## Get started
+## Install
 
-Install slurmdash on the machine you sit at — **not** on the cluster's
-login node — then point it at any host you can already `ssh` to.
+Install slurmdash on the machine you sit at — your workstation or any
+desktop you SSH from — **not** on the cluster's login node. It runs
+locally and reaches the cluster through your existing SSH setup.
+
+**Requires:** the system `ssh` binary on `$PATH` (OpenSSH 6.7+, which
+means any current Linux, macOS, or Windows 10+).
+
+Pick one of:
+
+#### a. Prebuilt binary (no Rust toolchain needed)
+
+**Linux x86_64**
 
 ```sh
-# 1. Install — pick whichever fits your setup.
-
-# Option A: prebuilt Linux x86_64 binary (no Rust toolchain needed)
 VERSION=0.1.0
 curl -L -o slurmdash.tar.gz \
   "https://github.com/the-farshad/slurmdash/releases/download/v${VERSION}/slurmdash-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
 tar -xzf slurmdash.tar.gz
 sudo install -m 0755 "slurmdash-${VERSION}-x86_64-unknown-linux-gnu/slurmdash" /usr/local/bin/
+slurmdash --version
+```
 
-# Option B: build from source (Rust 1.85+)
+**macOS (Apple Silicon)**
+
+```sh
+VERSION=0.1.0
+curl -L -o slurmdash.tar.gz \
+  "https://github.com/the-farshad/slurmdash/releases/download/v${VERSION}/slurmdash-${VERSION}-aarch64-apple-darwin.tar.gz"
+tar -xzf slurmdash.tar.gz
+sudo install -m 0755 "slurmdash-${VERSION}-aarch64-apple-darwin/slurmdash" /usr/local/bin/
+slurmdash --version
+```
+
+**macOS (Intel)** — same as Apple Silicon, replace
+`aarch64-apple-darwin` with `x86_64-apple-darwin`.
+
+Browse all builds on the
+[releases page](https://github.com/the-farshad/slurmdash/releases/latest).
+
+#### b. Build from source
+
+Requires Rust 1.85+ (2024 edition). Install rustup from
+<https://rustup.rs> if you don't have it.
+
+```sh
 git clone https://github.com/the-farshad/slurmdash
 cd slurmdash
 cargo install --path .
+slurmdash --version
+```
 
+#### c. From crates.io (not published yet)
 
-# 2. Connect using an existing ~/.ssh/config Host alias…
-slurmdash --host my-cluster
+```sh
+cargo install slurmdash    # will work once v0.1.x is on crates.io
+```
 
-# …or pass connection details inline:
+### First run
+
+After install, point slurmdash at any host you can already `ssh` to:
+
+```sh
+# Using an ~/.ssh/config Host alias you already have (recommended):
+slurmdash --host <your-alias>
+
+# Or pass connection details inline:
 slurmdash --host login.example.edu --user alice --ssh-key ~/.ssh/id_ed25519
 ```
 
-That's the whole install. The detailed [Install](#install) and
-[Quick start](#quick-start) sections below cover saved profiles,
-the web UI, and one-shot CLI commands.
+See [Quick start](#quick-start) below for saved profiles, the web UI,
+and one-shot CLI commands.
 
 ---
 
@@ -218,54 +260,6 @@ every five seconds and feeds the same audit-logged confirm flow when you
 click a destructive button.
 
 ---
-
-## Install
-
-Install slurmdash on the machine you sit at — your workstation, laptop,
-or any desktop — **not** on the cluster's login node. It runs locally
-and reaches the cluster through your existing SSH setup.
-
-Requires the system `ssh` binary on `$PATH` (OpenSSH 6.7+, which means
-any current Linux / macOS / Windows 10+).
-
-### Option 1 — prebuilt binary (no Rust toolchain needed)
-
-Pick the asset for your platform from the
-[latest release](https://github.com/the-farshad/slurmdash/releases/latest)
-and put `slurmdash` somewhere on your `$PATH`.
-
-Linux x86_64 one-liner:
-
-```sh
-VERSION=0.1.0
-curl -L -o slurmdash.tar.gz \
-  "https://github.com/the-farshad/slurmdash/releases/download/v${VERSION}/slurmdash-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-tar -xzf slurmdash.tar.gz
-sudo install -m 0755 "slurmdash-${VERSION}-x86_64-unknown-linux-gnu/slurmdash" /usr/local/bin/
-slurmdash --version
-```
-
-macOS binaries ship as part of the release workflow matrix; until
-they're attached, macOS users build from source (option 2).
-
-### Option 2 — build from source
-
-Requires Rust 1.85+ (2024 edition).
-
-```sh
-git clone https://github.com/the-farshad/slurmdash
-cd slurmdash
-cargo install --path .
-slurmdash --version
-```
-
-### Option 3 — from crates.io (future)
-
-Not published yet; will be:
-
-```sh
-cargo install slurmdash
-```
 
 ## Quick start
 
