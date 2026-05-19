@@ -108,15 +108,21 @@ async fn run_loop(
     // cloned into spawned tasks via `trigger_refresh`.
     let runner: &dyn Runner = handle.runner.as_ref();
 
-    // Initial fetch is synchronous so the first paint has data.
-    fetch_sync(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
-    fetch_sinfo_sync(runner, &mut state, db, cluster_id).await;
+    // Kick off the first refresh in the background and let the loop paint
+    // immediately. The "Loading…" placeholders in empty panels signal that
+    // data is on its way without blocking startup.
+    trigger_refresh(handle, cli, db, cluster_id, &mut state, &tx);
 
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(refresh_secs));
     ticker.tick().await;
+    // 200ms redraw ticker so the loading spinner animates while a fetch
+    // is in flight (and is otherwise a cheap no-op).
+    let mut redraw = tokio::time::interval(Duration::from_millis(200));
+    redraw.tick().await;
 
     loop {
+        state.frame = state.frame.wrapping_add(1);
         let table_rect = draw(terminal, &state, &theme, &cluster_label, last_refresh)?;
         state.table_rect = table_rect;
 
@@ -224,6 +230,11 @@ async fn run_loop(
                 if state.view != View::Logs {
                     trigger_refresh(handle, cli, db, cluster_id, &mut state, &tx);
                 }
+            }
+            _ = redraw.tick() => {
+                // Wake the loop so the spinner animates while a refresh
+                // is in flight. The redraw happens at the top of the loop;
+                // nothing else to do here.
             }
         }
     }
@@ -722,33 +733,6 @@ async fn open_log(
     Ok((LogView::new(job_id.to_string(), kind, path), stream))
 }
 
-/// Synchronous fetch used only for the initial frame. Background ticker
-/// fetches go through [`trigger_refresh`] instead.
-async fn fetch_sync(
-    runner: &dyn Runner,
-    cli: &Cli,
-    state: &mut AppState,
-    last_refresh: &mut Option<chrono::DateTime<chrono::Utc>>,
-    db: Option<&Db>,
-    cluster_id: Option<i64>,
-) {
-    let opts = squeue_opts(cli, &state.filter);
-    match squeue::list(runner, &opts).await {
-        Ok(jobs) => {
-            if let (Some(d), Some(cid)) = (db, cluster_id) {
-                let _ = snapshots::write_jobs(&d.pool, cid, &jobs).await;
-            }
-            state.all_jobs = jobs;
-            state.rebuild_filtered_jobs();
-            state.last_error = None;
-            *last_refresh = Some(chrono::Utc::now());
-        }
-        Err(e) => {
-            state.last_error = Some(format!("{e}"));
-        }
-    }
-}
-
 /// Spawn background squeue + sinfo refreshes. Results are delivered through
 /// `tx` and handled in [`handle_loop_msg`]. Idempotent — if a refresh is
 /// already in flight, that kind is skipped.
@@ -913,28 +897,5 @@ fn squeue_opts(cli: &Cli, filter: &FilterMode) -> squeue::Options {
         partition: cli.partition.clone(),
         state: cli.state.clone(),
         extra_args: Vec::new(),
-    }
-}
-
-async fn fetch_sinfo_sync(
-    runner: &dyn Runner,
-    state: &mut AppState,
-    db: Option<&Db>,
-    cluster_id: Option<i64>,
-) {
-    match sinfo::list_partitions(runner).await {
-        Ok(parts) => {
-            let resources = ClusterResources::from_partitions(&parts);
-            state.push_resource_sample(ResourceSample::from(chrono::Utc::now(), &resources));
-            state.resources = resources;
-            if let (Some(d), Some(cid)) = (db, cluster_id) {
-                let _ = snapshots::write_resources(&d.pool, cid, &parts).await;
-            }
-            state.partitions = parts;
-        }
-        Err(e) => {
-            // Non-fatal: keep the previous snapshot, surface in the banner.
-            tracing::warn!(error = %e, "sinfo refresh failed");
-        }
     }
 }

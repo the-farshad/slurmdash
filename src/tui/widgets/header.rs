@@ -7,6 +7,9 @@ use ratatui::widgets::Paragraph;
 use crate::app::{AppState, SortState};
 use crate::tui::theme::Theme;
 
+/// Braille spinner frames — one position per draw tick.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 pub fn render(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -17,13 +20,14 @@ pub fn render(
     _refreshing: bool,
 ) {
     let refreshing = state.refresh.jobs_in_flight || state.refresh.sinfo_in_flight;
+    let spinner = SPINNER[(state.frame as usize) % SPINNER.len()];
     let count = if state.text_filter.is_some() && state.jobs.len() != state.all_jobs.len() {
         format!("{}/{} jobs", state.jobs.len(), state.all_jobs.len())
     } else {
         format!("{} jobs", state.all_jobs.len().max(state.jobs.len()))
     };
     let status = if refreshing {
-        "refreshing…".to_string()
+        format!("{spinner} refreshing")
     } else if let Some(t) = last_refresh {
         format!("updated {}", t.format("%H:%M:%S"))
     } else {

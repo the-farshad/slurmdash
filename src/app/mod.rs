@@ -83,6 +83,8 @@ pub struct AppState {
     /// Bounds of the job-table widget on the last render, used to translate
     /// mouse clicks into row indices.
     pub table_rect: Option<Rect>,
+    /// Frame counter for animating the loading spinner.
+    pub frame: u64,
 
     pub log: Option<LogView>,
     /// While `Some`, the user is typing into the log search input.
