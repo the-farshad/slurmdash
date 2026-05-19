@@ -9,6 +9,37 @@ use crate::assist::AssistResponse;
 use crate::history::JobNameStats;
 use crate::slurm::model::{ClusterResources, Job, JobDetails, Partition};
 
+/// Which slice of the queue the dashboard is showing.
+#[derive(Debug, Clone, Default)]
+pub enum FilterMode {
+    /// `squeue --me` — only the current SSH user's jobs.
+    #[default]
+    Me,
+    /// `squeue` with no user filter — everyone's jobs.
+    All,
+    /// `squeue --user <U>` — a single named user.
+    User(String),
+}
+
+impl FilterMode {
+    pub fn label(&self) -> String {
+        match self {
+            FilterMode::Me => "me".to_string(),
+            FilterMode::All => "all".to_string(),
+            FilterMode::User(u) => format!("user={u}"),
+        }
+    }
+
+    /// `a` cycles Me → All → Me. User(_) → Me (one-way exit from a custom filter).
+    pub fn cycle(&self) -> Self {
+        match self {
+            FilterMode::Me => FilterMode::All,
+            FilterMode::All => FilterMode::Me,
+            FilterMode::User(_) => FilterMode::Me,
+        }
+    }
+}
+
 /// Max samples retained for the in-memory sparkline history. At the default
 /// 10-second refresh that's a 10-minute trailing window.
 pub const RESOURCE_HISTORY_LIMIT: usize = 60;
@@ -31,6 +62,7 @@ pub struct AppState {
     pub should_quit: bool,
 
     pub sort: SortState,
+    pub filter: FilterMode,
     /// Bounds of the job-table widget on the last render, used to translate
     /// mouse clicks into row indices.
     pub table_rect: Option<Rect>,

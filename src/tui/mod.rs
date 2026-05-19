@@ -23,7 +23,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::actions::ActionKind;
 use crate::app::{
-    AppState, AssistDialog, Confirm, LogKind, LogView, ResourceSample, View, apply_sort,
+    AppState, AssistDialog, Confirm, FilterMode, LogKind, LogView, ResourceSample, View, apply_sort,
 };
 use crate::assist::{AssistRequest, JobContext, ProposedKind};
 use crate::cli::Cli;
@@ -83,19 +83,18 @@ async fn run_loop(
         None => None,
     };
 
-    let opts = squeue::Options {
-        me: !cli.all,
-        user: None,
-        partition: cli.partition.clone(),
-        state: cli.state.clone(),
-        extra_args: Vec::new(),
+    let mut state = AppState {
+        filter: if cli.all {
+            FilterMode::All
+        } else {
+            FilterMode::Me
+        },
+        ..AppState::default()
     };
-
-    let mut state = AppState::default();
     let mut last_refresh = None;
     let mut log_stream: Option<LineStream> = None;
 
-    fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
     fetch_sinfo(runner, &mut state, db, cluster_id).await;
 
     let mut events = EventStream::new();
@@ -122,7 +121,7 @@ async fn run_loop(
                     Intent::None => {}
                     Intent::Quit => break,
                     Intent::Refresh => {
-                        fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                        fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
                         fetch_sinfo(runner, &mut state, db, cluster_id).await;
                     }
                     Intent::OpenDetails => {
@@ -179,7 +178,7 @@ async fn run_loop(
                             .await;
                             match result {
                                 Ok(()) => {
-                                    fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                                    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
                                 }
                                 Err(e) => state.last_error = Some(format!("{e}")),
                             }
@@ -189,14 +188,14 @@ async fn run_loop(
                         run_assist(runner, &handle.cluster_name, &mut state, config).await;
                     }
                     Intent::AssistRun(idx) => {
-                        run_assisted_command(runner, handle, db, &mut state, &opts, &mut last_refresh, cluster_id, idx).await;
+                        run_assisted_command(&mut state, idx);
                     }
                 }
                 if state.should_quit { break; }
             }
             _ = ticker.tick() => {
                 if state.view != View::Logs {
-                    fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                    fetch(runner, cli, &mut state, &mut last_refresh, db, cluster_id).await;
                     fetch_sinfo(runner, &mut state, db, cluster_id).await;
                 }
             }
@@ -487,6 +486,10 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
             Intent::None
         }
         KeyCode::Char('R') | KeyCode::Char('r') => Intent::Refresh,
+        KeyCode::Char('a') => {
+            state.filter = state.filter.cycle();
+            Intent::Refresh
+        }
         KeyCode::Enter | KeyCode::Char('d') => Intent::OpenDetails,
         KeyCode::Char('l') => Intent::OpenLog(LogKind::Stdout),
         KeyCode::Char('e') => Intent::OpenLog(LogKind::Stderr),
@@ -646,13 +649,14 @@ async fn open_log(
 
 async fn fetch(
     runner: &dyn Runner,
-    opts: &squeue::Options,
+    cli: &Cli,
     state: &mut AppState,
     last_refresh: &mut Option<chrono::DateTime<chrono::Utc>>,
     db: Option<&Db>,
     cluster_id: Option<i64>,
 ) {
-    match squeue::list(runner, opts).await {
+    let opts = squeue_opts(cli, &state.filter);
+    match squeue::list(runner, &opts).await {
         Ok(mut jobs) => {
             apply_sort(&mut jobs, state.sort);
             if state.selected >= jobs.len() && !jobs.is_empty() {
@@ -711,16 +715,7 @@ async fn run_assist(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_assisted_command(
-    _runner: &dyn Runner,
-    _handle: &RunnerHandle,
-    _db: Option<&Db>,
-    state: &mut AppState,
-    _opts: &squeue::Options,
-    _last_refresh: &mut Option<chrono::DateTime<chrono::Utc>>,
-    _cluster_id: Option<i64>,
-    idx: usize,
-) {
+fn run_assisted_command(state: &mut AppState, idx: usize) {
     let cmd_opt = state
         .assist
         .as_ref()
@@ -755,6 +750,24 @@ async fn run_assisted_command(
         job_id: job_id.clone(),
         preview: cmd.preview.clone(),
     });
+}
+
+/// Translate the runtime filter state plus CLI-fixed flags into squeue
+/// options. Computed per-fetch so the `a` toggle takes effect on the next
+/// refresh.
+fn squeue_opts(cli: &Cli, filter: &FilterMode) -> squeue::Options {
+    let (me, user) = match filter {
+        FilterMode::Me => (true, None),
+        FilterMode::All => (false, None),
+        FilterMode::User(u) => (false, Some(u.clone())),
+    };
+    squeue::Options {
+        me,
+        user,
+        partition: cli.partition.clone(),
+        state: cli.state.clone(),
+        extra_args: Vec::new(),
+    }
 }
 
 async fn fetch_sinfo(

@@ -25,11 +25,14 @@ pub fn render(
         "—".to_string()
     };
     let sort = format_sort(state.sort);
+    let filter = format!("filter:{}", state.filter.label());
 
     let line = Line::from(vec![
         Span::styled("slurmdash", theme.header_style()),
         Span::raw("  "),
         Span::styled(cluster_label.to_string(), Style::default().fg(theme.accent)),
+        Span::raw("  "),
+        Span::styled(filter, Style::default().fg(theme.accent)),
         Span::raw("  "),
         Span::styled(count, Style::default().fg(theme.muted)),
         Span::raw("  "),
