@@ -9,8 +9,8 @@ use super::state::JobState;
 /// Format string passed to `squeue --format=`. Order must match
 /// [`parse_squeue_text`]. Fields:
 /// JobID | Partition | Name | User | State | Time | TimeLimit | Nodes |
-/// Reason | SubmitTime | StartTime
-pub const SQUEUE_FORMAT: &str = "%i|%P|%j|%u|%T|%M|%l|%D|%R|%V|%S";
+/// Reason | SubmitTime | StartTime | Gres | MinMemory
+pub const SQUEUE_FORMAT: &str = "%i|%P|%j|%u|%T|%M|%l|%D|%R|%V|%S|%b|%m";
 
 fn parse_slurm_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let s = s.trim();
@@ -44,6 +44,8 @@ pub fn parse_squeue_text(s: &str) -> Vec<Job> {
         let reason_or_nodelist = it.next().unwrap_or("").to_string();
         let submit_time = parse_slurm_datetime(it.next().unwrap_or(""));
         let start_time = parse_slurm_datetime(it.next().unwrap_or(""));
+        let gres = it.next().unwrap_or("").trim().to_string();
+        let min_mem_mb = parse_slurm_mem(it.next().unwrap_or(""));
 
         let (job_id, array_id) = split_array_id(&raw_id);
 
@@ -60,6 +62,12 @@ pub fn parse_squeue_text(s: &str) -> Vec<Job> {
             reason_or_nodelist,
             submit_time,
             start_time,
+            gres: if gres == "(null)" || gres == "N/A" {
+                String::new()
+            } else {
+                gres
+            },
+            min_mem_mb,
         });
     }
     jobs
@@ -246,6 +254,37 @@ fn parse_gres(s: &str) -> (Option<u32>, Option<String>) {
     (None, None)
 }
 
+/// Parse a Slurm memory request (the `%m` field of squeue) into MB.
+///
+/// Accepts plain numbers (interpreted as MB, which is Slurm's default),
+/// or values with K/M/G/T suffixes. Also handles a trailing `n` (per-node)
+/// or `c` (per-cpu) suffix by stripping it. Returns `None` for empty,
+/// "N/A", or unparseable input.
+pub fn parse_slurm_mem(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() || s == "N/A" || s == "UNLIMITED" {
+        return None;
+    }
+    let s = s.trim_end_matches(['n', 'c', 'N', 'C']);
+    let (num_part, unit) = split_numeric_suffix(s);
+    let num: f64 = num_part.parse().ok()?;
+    let mb = match unit.to_ascii_uppercase().as_str() {
+        "" | "M" => num,
+        "K" => num / 1024.0,
+        "G" => num * 1024.0,
+        "T" => num * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some(mb.round().max(0.0) as u64)
+}
+
+fn split_numeric_suffix(s: &str) -> (&str, &str) {
+    let split = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    (&s[..split], &s[split..])
+}
+
 /// Parse a Slurm duration string into seconds. Recognized forms:
 /// `D-HH:MM:SS`, `HH:MM:SS`, `MM:SS`, `SS`, plus `"UNLIMITED"`/`"N/A"` → None.
 pub fn parse_duration(s: &str) -> Option<u64> {
@@ -276,7 +315,7 @@ mod tests {
 
     #[test]
     fn parses_squeue_text_row() {
-        let row = "12345|gpu|train|alice|R|01:02:03|02:00:00|2|nid[0001-0002]|2026-05-19T10:00:00|2026-05-19T10:30:00";
+        let row = "12345|gpu|train|alice|R|01:02:03|02:00:00|2|nid[0001-0002]|2026-05-19T10:00:00|2026-05-19T10:30:00|gpu:a100:2|16G";
         let jobs = parse_squeue_text(row);
         assert_eq!(jobs.len(), 1);
         let j = &jobs[0];
@@ -293,6 +332,21 @@ mod tests {
         let s = j.submit_time.unwrap();
         let t = j.start_time.unwrap();
         assert_eq!((t - s).num_minutes(), 30);
+        assert_eq!(j.gres, "gpu:a100:2");
+        assert_eq!(j.min_mem_mb, Some(16 * 1024));
+    }
+
+    #[test]
+    fn parses_slurm_memory_request() {
+        assert_eq!(parse_slurm_mem(""), None);
+        assert_eq!(parse_slurm_mem("N/A"), None);
+        assert_eq!(parse_slurm_mem("4096"), Some(4096));
+        assert_eq!(parse_slurm_mem("16G"), Some(16 * 1024));
+        assert_eq!(parse_slurm_mem("2T"), Some(2 * 1024 * 1024));
+        assert_eq!(parse_slurm_mem("1024K"), Some(1));
+        // Slurm appends 'n' (per-node) / 'c' (per-cpu)
+        assert_eq!(parse_slurm_mem("8Gn"), Some(8 * 1024));
+        assert_eq!(parse_slurm_mem("500Mc"), Some(500));
     }
 
     #[test]

@@ -430,6 +430,14 @@ pub struct ParsedFilter {
     pub name: Vec<String>,
     pub job_id: Vec<String>,
     pub reason: Vec<String>,
+    /// `gpu`, `gpu:any` — only jobs with ≥1 GPU in their GRES.
+    pub gpu_only: bool,
+    /// `cpu`, `gpu:none` — only jobs with 0 GPUs (CPU-only).
+    pub cpu_only: bool,
+    /// `m:>16G` / `mem:>16G` — minimum memory request floor (MB).
+    pub mem_min_mb: Option<u64>,
+    /// `m:<32G` / `mem:<32G` — maximum memory request ceiling (MB).
+    pub mem_max_mb: Option<u64>,
 }
 
 impl ParsedFilter {
@@ -441,6 +449,10 @@ impl ParsedFilter {
             && self.name.is_empty()
             && self.job_id.is_empty()
             && self.reason.is_empty()
+            && !self.gpu_only
+            && !self.cpu_only
+            && self.mem_min_mb.is_none()
+            && self.mem_max_mb.is_none()
     }
 
     /// All term strings concatenated (lowercased), used by the match
@@ -470,6 +482,19 @@ impl ParsedFilter {
 pub fn parse_filter(s: &str) -> ParsedFilter {
     let mut p = ParsedFilter::default();
     for token in s.split_whitespace() {
+        let lower = token.to_lowercase();
+        // Bare resource tokens — no colon required.
+        match lower.as_str() {
+            "gpu" => {
+                p.gpu_only = true;
+                continue;
+            }
+            "cpu" => {
+                p.cpu_only = true;
+                continue;
+            }
+            _ => {}
+        }
         if let Some((field, value)) = token.split_once(':') {
             let v = value.to_string();
             if v.is_empty() {
@@ -482,6 +507,11 @@ pub fn parse_filter(s: &str) -> ParsedFilter {
                 "name" | "n" => p.name.push(v),
                 "id" | "jobid" | "job" => p.job_id.push(v),
                 "reason" | "r" => p.reason.push(v),
+                "gpu" => match v.to_ascii_lowercase().as_str() {
+                    "none" | "no" | "0" => p.cpu_only = true,
+                    _ => p.gpu_only = true,
+                },
+                "mem" | "m" => apply_mem_filter(&mut p, &v),
                 // Unknown field → treat the whole token as free text.
                 _ => p.free.push(token.to_string()),
             }
@@ -492,9 +522,60 @@ pub fn parse_filter(s: &str) -> ParsedFilter {
     p
 }
 
+/// Decode a memory comparison like `>16G`, `<2T`, or a bare value
+/// (treated as a minimum). Sets `mem_min_mb` / `mem_max_mb` on the
+/// filter. Unparseable input is silently ignored — keeps the filter
+/// input forgiving instead of throwing an error mid-type.
+fn apply_mem_filter(p: &mut ParsedFilter, raw: &str) {
+    let raw = raw.trim();
+    let (cmp, num) = if let Some(rest) = raw.strip_prefix(">=") {
+        ('>', rest)
+    } else if let Some(rest) = raw.strip_prefix("<=") {
+        ('<', rest)
+    } else if let Some(rest) = raw.strip_prefix('>') {
+        ('>', rest)
+    } else if let Some(rest) = raw.strip_prefix('<') {
+        ('<', rest)
+    } else if let Some(rest) = raw.strip_prefix('=') {
+        ('=', rest)
+    } else {
+        ('>', raw)
+    };
+    if let Some(mb) = crate::slurm::parse::parse_slurm_mem(num) {
+        match cmp {
+            '>' => p.mem_min_mb = Some(mb),
+            '<' => p.mem_max_mb = Some(mb),
+            '=' => {
+                p.mem_min_mb = Some(mb);
+                p.mem_max_mb = Some(mb);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn matches_parsed(j: &Job, p: &ParsedFilter) -> bool {
     fn lc_contains(haystack: &str, needle: &str) -> bool {
         haystack.to_lowercase().contains(&needle.to_lowercase())
+    }
+
+    if p.gpu_only && !j.uses_gpu() {
+        return false;
+    }
+    if p.cpu_only && j.uses_gpu() {
+        return false;
+    }
+    if let Some(min) = p.mem_min_mb {
+        match j.min_mem_mb {
+            Some(m) if m >= min => {}
+            _ => return false,
+        }
+    }
+    if let Some(max) = p.mem_max_mb {
+        match j.min_mem_mb {
+            Some(m) if m <= max => {}
+            _ => return false,
+        }
     }
 
     p.free.iter().all(|q| {

@@ -134,6 +134,13 @@ pub struct Job {
     /// Wall-clock start time (`%S`). For pending jobs this is the
     /// scheduled start estimate (often `N/A`).
     pub start_time: Option<DateTime<Utc>>,
+    /// Raw GRES string from Slurm (`%b`), e.g. "gpu:a100:2", "gpu:4",
+    /// or empty for CPU-only jobs.
+    #[serde(default)]
+    pub gres: String,
+    /// Minimum memory per job/node requested (`%m`), in MB.
+    #[serde(default)]
+    pub min_mem_mb: Option<u64>,
 }
 
 impl Job {
@@ -152,6 +159,62 @@ impl Job {
             JobState::Pending => (Utc::now() - submit).num_seconds().try_into().ok(),
             _ => None,
         }
+    }
+
+    /// Number of GPUs this job is using (or requested), parsed from
+    /// `gres`. Returns 0 if no GPUs are present in the GRES string.
+    pub fn gpus(&self) -> u32 {
+        parse_gpu_count(&self.gres)
+    }
+
+    /// True when the job has at least one GPU in its GRES.
+    pub fn uses_gpu(&self) -> bool {
+        self.gpus() > 0
+    }
+}
+
+/// Pull the GPU count out of a Slurm GRES string. Accepts
+/// "gpu:N", "gpu:type:N", "gpu", and "(null)"; ignores other gres
+/// kinds (mps:, nic:, …). Stripping trailing `(IDX:...)` parentheses
+/// because squeue includes them when allocations are made.
+fn parse_gpu_count(s: &str) -> u32 {
+    let s = s.trim();
+    if s.is_empty() || s == "(null)" || s == "N/A" {
+        return 0;
+    }
+    let mut total: u32 = 0;
+    for token in s.split(',') {
+        let token = token.trim();
+        if !token.starts_with("gpu") {
+            continue;
+        }
+        let parts: Vec<&str> = token.split(':').collect();
+        let count_str = match parts.len() {
+            // "gpu" — unknown count; treat as 1
+            1 => "1",
+            // "gpu:N"
+            2 => parts[1],
+            // "gpu:type:N" — strip any "(IDX:...)" tail
+            _ => parts[2].split('(').next().unwrap_or(""),
+        };
+        total = total.saturating_add(count_str.parse::<u32>().unwrap_or(0));
+    }
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_count_parses_common_gres_strings() {
+        assert_eq!(parse_gpu_count(""), 0);
+        assert_eq!(parse_gpu_count("(null)"), 0);
+        assert_eq!(parse_gpu_count("gpu:4"), 4);
+        assert_eq!(parse_gpu_count("gpu:a100:2"), 2);
+        assert_eq!(parse_gpu_count("gpu:h100:8(IDX:0-7)"), 8);
+        assert_eq!(parse_gpu_count("mps:50,gpu:1"), 1);
+        assert_eq!(parse_gpu_count("nic:100"), 0);
     }
 }
 
