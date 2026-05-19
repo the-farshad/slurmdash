@@ -23,6 +23,9 @@ pub struct AssistRequest {
     pub cluster_name: String,
     pub jobs_snapshot: Vec<Job>,
     pub partitions: Vec<Partition>,
+    /// Optional human-readable history summary (e.g. "train_resnet: 12 runs,
+    /// median 2h14m, 1 timeout"), injected verbatim into the system prompt.
+    pub history_summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +122,12 @@ pub(crate) fn system_prompt(req: &AssistRequest) -> String {
             if let Some(workdir) = &d.workdir {
                 s.push_str(&format!("  workdir: {workdir}\n"));
             }
+        }
+    }
+    if let Some(history) = &req.history_summary {
+        s.push_str("\nLocal history for similar jobs:\n");
+        for line in history.lines() {
+            s.push_str(&format!("  {line}\n"));
         }
     }
     s

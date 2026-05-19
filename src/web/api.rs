@@ -118,6 +118,22 @@ pub async fn assist(
         None => None,
     };
 
+    // Build history summary if we have a DB and a selected job with a name.
+    let history_summary = match (&state.db, *state.cluster_id.read().await, &job_context) {
+        (Some(db), Some(cid), Some(ctx)) => {
+            let name = ctx.details.as_ref().and_then(|d| d.job_name.as_deref());
+            match name {
+                Some(n) => crate::history::job_name(&db.pool, cid, n, 30)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|s| crate::history::summarize(&s)),
+                None => None,
+            }
+        }
+        _ => None,
+    };
+
     let snap = state.snapshot.read().await;
     let req = AssistRequest {
         prompt: body.prompt,
@@ -125,6 +141,7 @@ pub async fn assist(
         cluster_name: state.handle.cluster_name.clone(),
         jobs_snapshot: snap.jobs.clone(),
         partitions: snap.partitions.clone(),
+        history_summary,
     };
     drop(snap);
 

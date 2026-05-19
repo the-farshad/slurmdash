@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 
 use crate::actions::ActionKind;
 use crate::assist::AssistResponse;
+use crate::history::JobNameStats;
 use crate::slurm::model::{ClusterResources, Job, JobDetails, Partition};
 
 /// Max samples retained for the in-memory sparkline history. At the default
@@ -23,6 +24,7 @@ pub struct AppState {
     pub selected: usize,
     pub view: View,
     pub details: Option<JobDetails>,
+    pub details_history: Option<JobNameStats>,
     pub confirm: Option<Confirm>,
     pub show_help: bool,
     pub last_error: Option<String>,

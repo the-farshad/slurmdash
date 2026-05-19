@@ -139,6 +139,16 @@ pub enum Command {
         job: Option<String>,
     },
 
+    /// Show history-driven recommendations from the local database
+    Recommend {
+        /// Filter to one job name
+        #[arg(long)]
+        job_name: Option<String>,
+        /// Trailing window in days
+        #[arg(long, default_value_t = 30)]
+        since_days: i64,
+    },
+
     /// Local web UI (Phase 3 — not yet implemented)
     Web {
         #[arg(long)]
@@ -204,6 +214,9 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         Some(Command::Assist { prompt, job }) => {
             run_assist(&cli, &config, prompt, job).await
         }
+        Some(Command::Recommend { job_name, since_days }) => {
+            run_recommend(&cli, &config, db, job_name, since_days).await
+        }
         Some(Command::Web {
             host,
             port,
@@ -239,6 +252,82 @@ async fn launch_tui(
     crate::tui::run(cli, config, handle, db).await
 }
 
+/// Build a one-paragraph history summary for the selected job's name (if
+/// any). Returns None when there's no DB, no job context, or the job has no
+/// `job_name` in scontrol output.
+async fn build_history_summary(
+    cli: &Cli,
+    config: &crate::config::Config,
+    cluster_name: &str,
+    is_local: bool,
+    job_context: Option<&crate::assist::JobContext>,
+) -> Option<String> {
+    if cli.no_db {
+        return None;
+    }
+    let job_name = job_context
+        .and_then(|c| c.details.as_ref())
+        .and_then(|d| d.job_name.as_deref())?;
+    let db = crate::db::Db::open(cli.db.clone(), config).await.ok()?;
+    let cluster_id =
+        crate::db::snapshots::ensure_cluster(&db.pool, cluster_name, is_local).await.ok()?;
+    let stats = crate::history::job_name(&db.pool, cluster_id, job_name, 30).await.ok()??;
+    Some(crate::history::summarize(&stats))
+}
+
+async fn run_recommend(
+    cli: &Cli,
+    config: &crate::config::Config,
+    db: Option<crate::db::Db>,
+    job_name: Option<String>,
+    since_days: i64,
+) -> Result<()> {
+    let Some(db) = db else {
+        anyhow::bail!("recommend needs the local database (don't pass --no-db)")
+    };
+    let handle = crate::ssh::build_runner(cli, config).await?;
+    let cluster_id = crate::db::snapshots::ensure_cluster(
+        &db.pool,
+        &handle.cluster_name,
+        handle.is_local,
+    )
+    .await?;
+
+    match job_name {
+        Some(name) => {
+            let stats = crate::history::job_name(&db.pool, cluster_id, &name, since_days).await?;
+            if let Some(s) = stats {
+                println!("{}", crate::history::summarize(&s));
+            } else {
+                println!("no snapshots for job name {name:?} in the last {since_days} days");
+            }
+        }
+        None => {
+            let all = crate::history::job_name_stats(&db.pool, cluster_id, since_days).await?;
+            if all.is_empty() {
+                println!("(no job snapshots in the local database — wait for a few refresh cycles)");
+            } else {
+                println!("Job name stats (cluster {}, last {since_days} days):", handle.cluster_name);
+                for s in all.iter().take(20) {
+                    println!("  {}", crate::history::summarize(s));
+                }
+            }
+            println!();
+            let parts = crate::history::partition_pressure(&db.pool, cluster_id, since_days).await?;
+            if !parts.is_empty() {
+                println!("Partition pressure (avg pending / running):");
+                for p in &parts {
+                    println!(
+                        "  {:<12}  PD avg {:>5.1}   R avg {:>5.1}   ({} samples)",
+                        p.partition, p.avg_pending, p.avg_running, p.samples
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_assist(
     cli: &Cli,
     config: &crate::config::Config,
@@ -264,12 +353,23 @@ async fn run_assist(
         None => None,
     };
 
+    // If we have a DB, look up history for the selected job's name.
+    let history_summary = build_history_summary(
+        cli,
+        config,
+        &handle.cluster_name,
+        handle.is_local,
+        job_context.as_ref(),
+    )
+    .await;
+
     let req = crate::assist::AssistRequest {
         prompt,
         job_context,
         cluster_name: handle.cluster_name.clone(),
         jobs_snapshot,
         partitions,
+        history_summary,
     };
     let resp = crate::assist::assist(req, config).await?;
 

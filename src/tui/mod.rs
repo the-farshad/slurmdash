@@ -135,6 +135,16 @@ async fn run_loop(
                             let job_id = job.job_id.clone();
                             match scontrol::show(runner, &job_id).await {
                                 Ok(d) => {
+                                    // Fetch history stats for this job's name if we have a DB.
+                                    state.details_history = match (db, cluster_id, d.job_name.as_deref()) {
+                                        (Some(db), Some(cid), Some(name)) => {
+                                            crate::history::job_name(&db.pool, cid, name, 30)
+                                                .await
+                                                .ok()
+                                                .flatten()
+                                        }
+                                        _ => None,
+                                    };
                                     state.details = Some(d);
                                     state.view = View::Details;
                                 }
@@ -512,6 +522,7 @@ fn handle_key_details(key: crossterm::event::KeyEvent, state: &mut AppState) -> 
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
             state.view = View::Dashboard;
             state.details = None;
+            state.details_history = None;
         }
         KeyCode::Char('?') => state.show_help = true,
         _ => {}
@@ -682,6 +693,10 @@ async fn run_assist(
         cluster_name: cluster_name.to_string(),
         jobs_snapshot: state.jobs.clone(),
         partitions: state.partitions.clone(),
+        // TUI Phase 5: history not yet threaded through the event loop —
+        // the recommendations panel in the details view is the primary
+        // surface. CLI and web both pass history_summary already.
+        history_summary: None,
     };
 
     let result = crate::assist::assist(req, config).await;
