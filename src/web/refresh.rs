@@ -23,7 +23,10 @@ async fn build_snapshot(state: &WebState) -> Snapshot {
     let runner = state.handle.runner.as_ref();
     let mut snap = Snapshot::default();
 
-    let opts = squeue::Options { me: false, ..Default::default() };
+    let opts = squeue::Options {
+        me: false,
+        ..Default::default()
+    };
     match squeue::list(runner, &opts).await {
         Ok(jobs) => {
             if let (Some(db), Some(cid)) = (&state.db, *state.cluster_id.read().await) {

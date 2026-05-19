@@ -120,16 +120,18 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             Span::styled("  ", muted_style),
             Span::raw(crate::history::summarize(stats)),
         ]));
-        if let (Some(p50), Some(max)) =
-            (stats.elapsed_p50_seconds, stats.elapsed_max_seconds)
-        {
+        if let (Some(p50), Some(max)) = (stats.elapsed_p50_seconds, stats.elapsed_max_seconds) {
             // Suggestion line: rough 95% pad against historical max.
             let pad = max + max / 20;
             lines.push(Line::from(vec![
                 Span::styled("  suggest --time at least ", muted_style),
                 Span::styled(humanize_dur(pad), Style::default().fg(theme.accent)),
                 Span::styled(
-                    format!(" (median {} / max {})", humanize_dur(p50), humanize_dur(max)),
+                    format!(
+                        " (median {} / max {})",
+                        humanize_dur(p50),
+                        humanize_dur(max)
+                    ),
                     muted_style,
                 ),
             ]));
@@ -151,7 +153,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         .borders(Borders::TOP | Borders::BOTTOM)
         .border_style(theme.border_style());
     frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         body_area,
     );
 }

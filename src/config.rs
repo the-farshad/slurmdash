@@ -96,8 +96,8 @@ impl Config {
 
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let cfg: Self = toml::from_str(&raw)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let cfg: Self =
+            toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -119,11 +119,9 @@ impl Config {
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "slurmdash")
-        .map(|d| d.config_dir().join("config.toml"))
+    ProjectDirs::from("", "", "slurmdash").map(|d| d.config_dir().join("config.toml"))
 }
 
 pub fn default_db_path() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "slurmdash")
-        .map(|d| d.data_dir().join("slurmdash.db"))
+    ProjectDirs::from("", "", "slurmdash").map(|d| d.data_dir().join("slurmdash.db"))
 }

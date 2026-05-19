@@ -37,10 +37,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
         Span::raw(dialog.input.clone()),
         Span::styled("_", Style::default().fg(theme.accent)),
     ]);
-    frame.render_widget(
-        Paragraph::new(prompt_line).block(input_block),
-        layout[0],
-    );
+    frame.render_widget(Paragraph::new(prompt_line).block(input_block), layout[0]);
 
     let body: Vec<Line> = if dialog.in_flight {
         vec![Line::styled(" thinking…", theme.footer_style())]
@@ -67,10 +64,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
             ));
             for (i, cmd) in resp.commands.iter().enumerate().take(9) {
                 out.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {}. ", i + 1),
-                        Style::default().fg(theme.accent),
-                    ),
+                    Span::styled(format!(" {}. ", i + 1), Style::default().fg(theme.accent)),
                     Span::raw(cmd.preview.clone()),
                 ]));
             }
@@ -87,7 +81,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
         .borders(Borders::ALL)
         .border_style(theme.border_style());
     frame.render_widget(
-        Paragraph::new(body).block(body_block).wrap(Wrap { trim: false }),
+        Paragraph::new(body)
+            .block(body_block)
+            .wrap(Wrap { trim: false }),
         layout[1],
     );
 
@@ -99,10 +95,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
         Span::styled("Esc", theme.header_style()),
         Span::raw(" close"),
     ]);
-    frame.render_widget(
-        Paragraph::new(hint).style(theme.footer_style()),
-        layout[2],
-    );
+    frame.render_widget(Paragraph::new(hint).style(theme.footer_style()), layout[2]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

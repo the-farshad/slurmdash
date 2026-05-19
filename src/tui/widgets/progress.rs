@@ -23,12 +23,16 @@ pub fn render(
     theme: &Theme,
 ) {
     let width = area.width.saturating_sub(label.len() as u16 + 20);
-    let pct = if total == 0 { 0.0 } else { (done as f64 / total as f64).clamp(0.0, 1.0) };
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    };
     let filled = (pct * width as f64).round() as usize;
     let bar_color = gradient_color(pct, theme);
 
-    let bar_fill: String = std::iter::repeat('█').take(filled).collect();
-    let bar_rest: String = std::iter::repeat('░').take(width as usize - filled).collect();
+    let bar_fill: String = "█".repeat(filled);
+    let bar_rest: String = "░".repeat(width as usize - filled);
 
     let line = Line::from(vec![
         Span::styled(format!("{label:<6}"), theme.footer_style()),

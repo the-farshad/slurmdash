@@ -56,7 +56,9 @@ pub async fn run(
     let preview = kind.preview(job_id);
 
     let cluster_id = match db {
-        Some(d) => snapshots::ensure_cluster(&d.pool, cluster_name, is_local).await.ok(),
+        Some(d) => snapshots::ensure_cluster(&d.pool, cluster_name, is_local)
+            .await
+            .ok(),
         None => None,
     };
 

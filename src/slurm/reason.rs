@@ -46,19 +46,13 @@ pub fn explain(reason: &str) -> ReasonExplanation {
             "Requested nodes are unavailable, down, drained, or reserved.",
             Some("Inspect `sinfo` for node state."),
         ),
-        "BeginTime" => (
-            "Held until a scheduled begin time.",
+        "BeginTime" => ("Held until a scheduled begin time.", None),
+        "Licenses" => ("Waiting for a license to free up.", None),
+        "ReqNodeUnavail" => ("A requested node is currently unavailable.", None),
+        _ => (
+            "No human-readable explanation registered for this reason.",
             None,
         ),
-        "Licenses" => (
-            "Waiting for a license to free up.",
-            None,
-        ),
-        "ReqNodeUnavail" => (
-            "A requested node is currently unavailable.",
-            None,
-        ),
-        _ => ("No human-readable explanation registered for this reason.", None),
     };
 
     ReasonExplanation {

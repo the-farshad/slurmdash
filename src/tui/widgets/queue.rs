@@ -52,7 +52,11 @@ fn bar_line(
 ) {
     let state = JobState::parse(state_label);
     let color = theme.job_state_style(&state).fg.unwrap_or(theme.fg);
-    let pct = if max == 0 { 0.0 } else { count as f64 / max as f64 };
+    let pct = if max == 0 {
+        0.0
+    } else {
+        count as f64 / max as f64
+    };
 
     let reserved = 10 + 1 + 6 + 1;
     let bar_w = area.width.saturating_sub(reserved) as usize;

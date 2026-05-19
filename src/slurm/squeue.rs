@@ -20,10 +20,7 @@ pub struct Options {
 /// (`--json`) on Slurm 20.11+ will be added in Phase 2 alongside version
 /// detection.
 pub async fn list(runner: &dyn Runner, opts: &Options) -> Result<Vec<Job>> {
-    let mut argv: Vec<String> = vec![
-        "--noheader".into(),
-        format!("--format={SQUEUE_FORMAT}"),
-    ];
+    let mut argv: Vec<String> = vec!["--noheader".into(), format!("--format={SQUEUE_FORMAT}")];
 
     if opts.me {
         argv.push("--me".into());

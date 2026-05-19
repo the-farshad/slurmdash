@@ -120,8 +120,7 @@ impl Default for SortState {
     }
 }
 
-pub fn apply_sort(jobs: &mut Vec<Job>, sort: SortState) {
-    use std::cmp::Ordering;
+pub fn apply_sort(jobs: &mut [Job], sort: SortState) {
     jobs.sort_by(|a, b| {
         let ord = match sort.key {
             SortKey::State => a.state.short().cmp(b.state.short()),
@@ -134,9 +133,6 @@ pub fn apply_sort(jobs: &mut Vec<Job>, sort: SortState) {
         };
         if sort.reverse { ord.reverse() } else { ord }
     });
-    // Stability: secondary sort by job_id so the order is deterministic when
-    // the primary key ties.
-    let _ = Ordering::Equal;
 }
 
 fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {

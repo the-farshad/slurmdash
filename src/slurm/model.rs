@@ -40,8 +40,7 @@ pub struct Partition {
 
 impl Partition {
     pub fn total_memory_mb(&self) -> Option<u64> {
-        self.memory_mb_per_node
-            .map(|m| m * self.nodes.total as u64)
+        self.memory_mb_per_node.map(|m| m * self.nodes.total as u64)
     }
 
     pub fn allocated_memory_mb(&self) -> Option<u64> {

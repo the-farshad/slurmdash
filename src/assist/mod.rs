@@ -95,11 +95,7 @@ pub(crate) fn system_prompt(req: &AssistRequest) -> String {
         for p in &req.partitions {
             s.push_str(&format!(
                 "  {} — nodes alloc {}/{}, cpus alloc {}/{}",
-                p.name,
-                p.nodes.allocated,
-                p.nodes.total,
-                p.cpus.allocated,
-                p.cpus.total,
+                p.name, p.nodes.allocated, p.nodes.total, p.cpus.allocated, p.cpus.total,
             ));
             if let Some(g) = p.gpus_per_node {
                 s.push_str(&format!(", gpus/node {g}"));
@@ -137,7 +133,9 @@ pub(crate) fn system_prompt(req: &AssistRequest) -> String {
 /// out of the model's free-text reply so we can build proposed commands.
 pub(crate) fn extract_commands(text: &str) -> Vec<ProposedCommand> {
     let mut out = Vec::new();
-    let re = regex::Regex::new(r"(?m)^\s*(scancel|scontrol\s+(?:hold|release|requeue)|sbatch)\b[^\n]*$").unwrap();
+    let re =
+        regex::Regex::new(r"(?m)^\s*(scancel|scontrol\s+(?:hold|release|requeue)|sbatch)\b[^\n]*$")
+            .unwrap();
     for m in re.find_iter(text) {
         let line = m.as_str().trim();
         let kind = classify(line);

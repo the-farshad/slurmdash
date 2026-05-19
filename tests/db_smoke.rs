@@ -29,7 +29,9 @@ async fn db_migrate_snapshot_and_audit_round_trip() {
         nodes: 1,
         reason_or_nodelist: "nid001".into(),
     }];
-    snapshots::write_jobs(&db.pool, cluster_id, &jobs).await.unwrap();
+    snapshots::write_jobs(&db.pool, cluster_id, &jobs)
+        .await
+        .unwrap();
 
     audit::record(
         &db.pool,

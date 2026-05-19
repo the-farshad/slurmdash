@@ -115,7 +115,11 @@ pub async fn run(
     println!("  cluster: {}", state.handle.cluster_name);
     println!(
         "  mode:    {}",
-        if opts.readonly { "readonly" } else { "read/write" }
+        if opts.readonly {
+            "readonly"
+        } else {
+            "read/write"
+        }
     );
     println!("  press Ctrl+C to stop");
     println!();

@@ -19,8 +19,7 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .context("ANTHROPIC_API_KEY is not set")?;
+        let api_key = std::env::var("ANTHROPIC_API_KEY").context("ANTHROPIC_API_KEY is not set")?;
         if api_key.trim().is_empty() {
             bail!("ANTHROPIC_API_KEY is empty");
         }
@@ -38,10 +37,7 @@ impl Provider for AnthropicProvider {
         "anthropic"
     }
 
-    fn complete<'a>(
-        &'a self,
-        req: &'a AssistRequest,
-    ) -> BoxFuture<'a, Result<AssistResponse>> {
+    fn complete<'a>(&'a self, req: &'a AssistRequest) -> BoxFuture<'a, Result<AssistResponse>> {
         Box::pin(async move {
             let url = format!("{}/v1/messages", self.endpoint.trim_end_matches('/'));
             let body = MessagesRequest {
@@ -67,12 +63,13 @@ impl Provider for AnthropicProvider {
                 let body = resp.text().await.unwrap_or_default();
                 bail!("anthropic returned {status}: {body}");
             }
-            let parsed: MessagesResponse = resp.json().await.context("decoding anthropic response")?;
+            let parsed: MessagesResponse =
+                resp.json().await.context("decoding anthropic response")?;
             let text = parsed
                 .content
                 .into_iter()
-                .filter_map(|b| match b {
-                    ContentBlock::Text { text } => Some(text),
+                .map(|b| match b {
+                    ContentBlock::Text { text } => text,
                 })
                 .collect::<Vec<_>>()
                 .join("\n");

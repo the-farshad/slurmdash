@@ -36,12 +36,7 @@ use crate::tui::theme::Theme;
 
 type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 
-pub async fn run(
-    cli: Cli,
-    config: Config,
-    handle: RunnerHandle,
-    db: Option<Db>,
-) -> Result<()> {
+pub async fn run(cli: Cli, config: Config, handle: RunnerHandle, db: Option<Db>) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let result = run_loop(&mut terminal, &cli, &config, &handle, db.as_ref()).await;
     restore_terminal(&mut terminal)?;
@@ -194,7 +189,7 @@ async fn run_loop(
                         run_assist(runner, &handle.cluster_name, &mut state, config).await;
                     }
                     Intent::AssistRun(idx) => {
-                        run_assisted_command(runner, &handle, db, &mut state, &opts, &mut last_refresh, cluster_id, idx).await;
+                        run_assisted_command(runner, handle, db, &mut state, &opts, &mut last_refresh, cluster_id, idx).await;
                     }
                 }
                 if state.should_quit { break; }
@@ -392,7 +387,7 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
             }
             KeyCode::Char(c) if c.is_ascii_digit() && dialog.response.is_some() => {
                 let idx = (c as u8 - b'0') as usize;
-                if idx >= 1 && idx <= 9 {
+                if (1..=9).contains(&idx) {
                     return Intent::AssistRun(idx - 1);
                 }
             }
@@ -431,7 +426,9 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
 
     if state.confirm.is_some() {
         match key.code {
-            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => return Intent::ConfirmAction,
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                return Intent::ConfirmAction;
+            }
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                 state.confirm = None;
             }
@@ -585,8 +582,12 @@ fn handle_key_logs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
 }
 
 fn handle_mouse(m: MouseEvent, state: &mut AppState) {
-    let MouseEvent { kind, column, row, .. } = m;
-    let Some(table_rect) = state.table_rect else { return };
+    let MouseEvent {
+        kind, column, row, ..
+    } = m;
+    let Some(table_rect) = state.table_rect else {
+        return;
+    };
     if !matches!(state.view, View::Dashboard | View::Jobs) {
         return;
     }
@@ -678,7 +679,9 @@ async fn run_assist(
     state: &mut AppState,
     config: &Config,
 ) {
-    let Some(dialog) = state.assist.as_mut() else { return };
+    let Some(dialog) = state.assist.as_mut() else {
+        return;
+    };
     let prompt = std::mem::take(&mut dialog.input);
     dialog.in_flight = true;
 
@@ -709,6 +712,7 @@ async fn run_assist(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_assisted_command(
     _runner: &dyn Runner,
     _handle: &RunnerHandle,

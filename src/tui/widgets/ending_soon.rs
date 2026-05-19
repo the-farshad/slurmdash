@@ -61,10 +61,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
                     format!(" {:<8}", j.job_id),
                     Style::default().fg(theme.accent),
                 ),
-                Span::styled(
-                    format!("{:<14.14} ", j.name),
-                    Style::default().fg(theme.fg),
-                ),
+                Span::styled(format!("{:<14.14} ", j.name), Style::default().fg(theme.fg)),
                 Span::styled(format!("-{}", hms(remaining)), Style::default().fg(color)),
             ])
         })

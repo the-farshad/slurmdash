@@ -31,17 +31,15 @@ pub fn render(
 
     if history.is_empty() || inner.width < 20 {
         frame.render_widget(
-            Paragraph::new(Line::styled(
-                " collecting samples…",
-                theme.footer_style(),
-            )),
+            Paragraph::new(Line::styled(" collecting samples…", theme.footer_style())),
             inner,
         );
         return;
     }
 
     let has_gpu = history.iter().any(|s| s.has_gpu);
-    let columns: Vec<(&str, fn(&ResourceSample) -> f32)> = if has_gpu {
+    type Accessor = fn(&ResourceSample) -> f32;
+    let columns: Vec<(&str, Accessor)> = if has_gpu {
         vec![
             ("CPU", |s| s.cpu_pct),
             ("GPU", |s| s.gpu_pct),
@@ -61,7 +59,7 @@ pub fn render(
 
     for (i, (label, accessor)) in columns.iter().enumerate() {
         let area = chunks[i];
-        let current = history.back().map(|s| accessor(s)).unwrap_or(0.0);
+        let current = history.back().map(accessor).unwrap_or(0.0);
         let color = gradient(current as f64, theme);
 
         let label_w: u16 = 5;

@@ -106,14 +106,16 @@ pub async fn assist(
     query: Option<Query<TokenQuery>>,
     Json(body): Json<AssistBody>,
 ) -> Result<Json<AssistResponse>, (StatusCode, String)> {
-    let state =
-        require(state_in, headers, query).map_err(|s| (s, "unauthorized".to_string()))?;
+    let state = require(state_in, headers, query).map_err(|s| (s, "unauthorized".to_string()))?;
 
     // Selected-job context: fetch fresh details if requested.
     let job_context = match body.job_id {
         Some(id) => {
             let details = scontrol::show(state.handle.runner.as_ref(), &id).await.ok();
-            Some(JobContext { job_id: id, details })
+            Some(JobContext {
+                job_id: id,
+                details,
+            })
         }
         None => None,
     };
@@ -158,8 +160,7 @@ async fn run_action(
     job_id: String,
     kind: ActionKind,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let state =
-        require(state_in, headers, query).map_err(|s| (s, "unauthorized".to_string()))?;
+    let state = require(state_in, headers, query).map_err(|s| (s, "unauthorized".to_string()))?;
     if state.readonly {
         return Err((StatusCode::FORBIDDEN, "server is readonly".to_string()));
     }

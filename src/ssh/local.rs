@@ -54,10 +54,7 @@ impl Runner for LocalRunner {
                 .stderr(Stdio::null())
                 .spawn()
                 .with_context(|| format!("spawning {program}"))?;
-            let stdout = child
-                .stdout
-                .take()
-                .context("child has no stdout pipe")?;
+            let stdout = child.stdout.take().context("child has no stdout pipe")?;
             let mut lines = BufReader::new(stdout).lines();
             let (tx, rx) = mpsc::channel(1024);
             let join = tokio::spawn(async move {

@@ -79,15 +79,22 @@ impl Db {
     }
 
     pub async fn clear_history(&self) -> Result<()> {
-        sqlx::query("DELETE FROM job_snapshots").execute(&self.pool).await?;
-        sqlx::query("DELETE FROM resource_snapshots").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM job_snapshots")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM resource_snapshots")
+            .execute(&self.pool)
+            .await?;
         println!("history cleared");
         Ok(())
     }
 
     pub async fn backup(&self, dest: &Path) -> Result<()> {
         // Simplest possible: VACUUM INTO copies the database to a new file.
-        let sql = format!("VACUUM INTO '{}'", dest.display().to_string().replace('\'', "''"));
+        let sql = format!(
+            "VACUUM INTO '{}'",
+            dest.display().to_string().replace('\'', "''")
+        );
         sqlx::query(&sql).execute(&self.pool).await?;
         println!("backup written to {}", dest.display());
         Ok(())
@@ -102,12 +109,15 @@ impl Db {
     }
 
     pub async fn print_status(&self) -> Result<()> {
-        let job_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM job_snapshots").fetch_one(&self.pool).await?;
-        let resource_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM resource_snapshots").fetch_one(&self.pool).await?;
-        let audit_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM command_audit_log").fetch_one(&self.pool).await?;
+        let job_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM job_snapshots")
+            .fetch_one(&self.pool)
+            .await?;
+        let resource_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resource_snapshots")
+            .fetch_one(&self.pool)
+            .await?;
+        let audit_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM command_audit_log")
+            .fetch_one(&self.pool)
+            .await?;
 
         let size = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
         println!("Local DB");

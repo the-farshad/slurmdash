@@ -11,8 +11,8 @@ software is required on the cluster beyond what Slurm already installs.
 
 ## Status
 
-Pre-MVP — planning and scaffolding. Nothing usable yet. The [roadmap](#roadmap)
-is the working plan; Phase 1 is the next milestone.
+Initial release: **v0.1.0** (see [CHANGELOG.md](CHANGELOG.md)). All five
+phases listed in the roadmap below are implemented in this release.
 
 Note: Slurm upstream ships an unrelated GTK admin GUI also called `sview` in
 `slurm-gui` / `slurm-sview` system packages. `slurmdash` is a separate Rust
@@ -37,20 +37,41 @@ It does not require `slurmrestd`, custom daemons, or any cluster-side install.
 - SSH private keys, passwords, and full logs are not stored. The local
   database can be disabled, encrypted, or wiped.
 
-## Quick start
+## Installation
 
-> Not yet shippable. Once Phase 1 lands:
+Requires Rust 1.85+ (2024 edition) and the system `ssh` binary on `$PATH`.
+
+From source (recommended until a release is published to crates.io):
 
 ```sh
-# Install
-cargo install slurmdash
+git clone https://github.com/the-farshad/slurmdash
+cd slurmdash
+cargo install --path .
+```
 
-# Run against a host already in ~/.ssh/config
+Or, when `crates.io` publishing happens:
+
+```sh
+cargo install slurmdash
+```
+
+Prebuilt Linux binaries are attached to each tagged GitHub release.
+
+## Quick start
+
+```sh
+# Against a host already in ~/.ssh/config
 slurmdash --host login.cluster.edu --user alice
 
 # Or define a profile in ~/.config/slurmdash/config.toml and:
 slurmdash connect frontier
+
+# Browser dashboard on a loopback port
+slurmdash web --port 8080
 ```
+
+Keys: `Enter` job details, `l` / `e` tail stdout/stderr, `c` cancel,
+`Ctrl+K` open the assistant, `?` show all keys, `q` quit.
 
 ## Configuration
 

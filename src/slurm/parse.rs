@@ -241,8 +241,14 @@ pub fn parse_duration(s: &str) -> Option<u64> {
     if let Some(secs) = caps.get(5) {
         return secs.as_str().parse().ok();
     }
-    let days: u64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let hours: u64 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let days: u64 = caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let hours: u64 = caps
+        .get(2)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
     let mins: u64 = caps.get(3).and_then(|m| m.as_str().parse().ok())?;
     let secs: u64 = caps.get(4).and_then(|m| m.as_str().parse().ok())?;
     Some(days * 86400 + hours * 3600 + mins * 60 + secs)

@@ -23,17 +23,28 @@ pub fn render_header(
         theme.action_warning
     };
     let mut spans = vec![
-        Span::styled(format!(" log "), theme.header_style()),
+        Span::styled(" log ", theme.header_style()),
         Span::raw(format!("{}  ", log.kind.label())),
         Span::styled(log.path.clone(), Style::default().fg(theme.muted)),
         Span::raw("    "),
-        Span::styled(follow, Style::default().fg(follow_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            follow,
+            Style::default()
+                .fg(follow_color)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("    "),
-        Span::styled(format!("{} lines", log.lines.len()), Style::default().fg(theme.muted)),
+        Span::styled(
+            format!("{} lines", log.lines.len()),
+            Style::default().fg(theme.muted),
+        ),
     ];
     if let Some(q) = typing_search {
         spans.push(Span::raw("    /"));
-        spans.push(Span::styled(q.to_string(), Style::default().fg(theme.accent)));
+        spans.push(Span::styled(
+            q.to_string(),
+            Style::default().fg(theme.accent),
+        ));
         spans.push(Span::raw("_"));
     } else if let Some(q) = &log.search {
         spans.push(Span::raw("    search="));

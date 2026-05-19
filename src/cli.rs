@@ -77,9 +77,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Connect to a saved cluster profile (same as --cluster)
-    Connect {
-        cluster: String,
-    },
+    Connect { cluster: String },
 
     /// Tail job logs (stdout by default)
     Logs {
@@ -190,8 +188,7 @@ pub enum ExportFormat {
 }
 
 pub async fn dispatch(mut cli: Cli) -> Result<()> {
-    let config = crate::config::Config::load(cli.config.as_deref())
-        .context("loading config")?;
+    let config = crate::config::Config::load(cli.config.as_deref()).context("loading config")?;
 
     let db = if cli.no_db {
         None
@@ -207,16 +204,44 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
     match command {
         Some(Command::Db { cmd }) => handle_db(cmd, db).await,
 
-        Some(Command::Cancel { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Cancel).await,
-        Some(Command::Hold { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Hold).await,
-        Some(Command::Release { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Release).await,
-        Some(Command::Requeue { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Requeue).await,
-        Some(Command::Assist { prompt, job }) => {
-            run_assist(&cli, &config, prompt, job).await
+        Some(Command::Cancel { job_id }) => {
+            run_action(
+                &cli,
+                &config,
+                db,
+                &job_id,
+                crate::actions::ActionKind::Cancel,
+            )
+            .await
         }
-        Some(Command::Recommend { job_name, since_days }) => {
-            run_recommend(&cli, &config, db, job_name, since_days).await
+        Some(Command::Hold { job_id }) => {
+            run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Hold).await
         }
+        Some(Command::Release { job_id }) => {
+            run_action(
+                &cli,
+                &config,
+                db,
+                &job_id,
+                crate::actions::ActionKind::Release,
+            )
+            .await
+        }
+        Some(Command::Requeue { job_id }) => {
+            run_action(
+                &cli,
+                &config,
+                db,
+                &job_id,
+                crate::actions::ActionKind::Requeue,
+            )
+            .await
+        }
+        Some(Command::Assist { prompt, job }) => run_assist(&cli, &config, prompt, job).await,
+        Some(Command::Recommend {
+            job_name,
+            since_days,
+        }) => run_recommend(&cli, &config, db, job_name, since_days).await,
         Some(Command::Web {
             host,
             port,
@@ -224,8 +249,7 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
             no_open_browser,
         }) => {
             let handle = crate::ssh::build_runner(&cli, &config).await?;
-            let opts =
-                crate::web::WebOptions::from_cli(host, port, readonly, no_open_browser)?;
+            let opts = crate::web::WebOptions::from_cli(host, port, readonly, no_open_browser)?;
             crate::web::run(cli, config, handle, db, opts).await
         }
         Some(Command::Logs { .. })
@@ -269,9 +293,12 @@ async fn build_history_summary(
         .and_then(|c| c.details.as_ref())
         .and_then(|d| d.job_name.as_deref())?;
     let db = crate::db::Db::open(cli.db.clone(), config).await.ok()?;
-    let cluster_id =
-        crate::db::snapshots::ensure_cluster(&db.pool, cluster_name, is_local).await.ok()?;
-    let stats = crate::history::job_name(&db.pool, cluster_id, job_name, 30).await.ok()??;
+    let cluster_id = crate::db::snapshots::ensure_cluster(&db.pool, cluster_name, is_local)
+        .await
+        .ok()?;
+    let stats = crate::history::job_name(&db.pool, cluster_id, job_name, 30)
+        .await
+        .ok()??;
     Some(crate::history::summarize(&stats))
 }
 
@@ -286,12 +313,9 @@ async fn run_recommend(
         anyhow::bail!("recommend needs the local database (don't pass --no-db)")
     };
     let handle = crate::ssh::build_runner(cli, config).await?;
-    let cluster_id = crate::db::snapshots::ensure_cluster(
-        &db.pool,
-        &handle.cluster_name,
-        handle.is_local,
-    )
-    .await?;
+    let cluster_id =
+        crate::db::snapshots::ensure_cluster(&db.pool, &handle.cluster_name, handle.is_local)
+            .await?;
 
     match job_name {
         Some(name) => {
@@ -305,15 +329,21 @@ async fn run_recommend(
         None => {
             let all = crate::history::job_name_stats(&db.pool, cluster_id, since_days).await?;
             if all.is_empty() {
-                println!("(no job snapshots in the local database — wait for a few refresh cycles)");
+                println!(
+                    "(no job snapshots in the local database — wait for a few refresh cycles)"
+                );
             } else {
-                println!("Job name stats (cluster {}, last {since_days} days):", handle.cluster_name);
+                println!(
+                    "Job name stats (cluster {}, last {since_days} days):",
+                    handle.cluster_name
+                );
                 for s in all.iter().take(20) {
                     println!("  {}", crate::history::summarize(s));
                 }
             }
             println!();
-            let parts = crate::history::partition_pressure(&db.pool, cluster_id, since_days).await?;
+            let parts =
+                crate::history::partition_pressure(&db.pool, cluster_id, since_days).await?;
             if !parts.is_empty() {
                 println!("Partition pressure (avg pending / running):");
                 for p in &parts {
@@ -339,11 +369,16 @@ async fn run_assist(
 
     let jobs_snapshot = crate::slurm::squeue::list(
         runner,
-        &crate::slurm::squeue::Options { me: false, ..Default::default() },
+        &crate::slurm::squeue::Options {
+            me: false,
+            ..Default::default()
+        },
     )
     .await
     .unwrap_or_default();
-    let partitions = crate::slurm::sinfo::list_partitions(runner).await.unwrap_or_default();
+    let partitions = crate::slurm::sinfo::list_partitions(runner)
+        .await
+        .unwrap_or_default();
 
     let job_context = match job {
         Some(j) => {

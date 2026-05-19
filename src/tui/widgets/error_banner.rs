@@ -16,7 +16,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, message: &str, theme: &Theme) {
         .border_style(Style::default().fg(theme.action_danger));
 
     let lines = vec![
-        Line::from(Span::styled(message, Style::default().fg(theme.action_danger))),
+        Line::from(Span::styled(
+            message,
+            Style::default().fg(theme.action_danger),
+        )),
         Line::raw(""),
         Line::from(Span::styled(
             " press any key to dismiss",

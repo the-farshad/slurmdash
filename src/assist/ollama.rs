@@ -16,8 +16,8 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn from_env() -> Self {
-        let raw = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let raw =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
         // Tolerate the common `OLLAMA_HOST=host:port` form (Ollama itself
         // accepts that without a scheme) by adding the missing scheme.
         let host = if raw.starts_with("http://") || raw.starts_with("https://") {
@@ -37,18 +37,21 @@ impl Provider for OllamaProvider {
         "ollama"
     }
 
-    fn complete<'a>(
-        &'a self,
-        req: &'a AssistRequest,
-    ) -> BoxFuture<'a, Result<AssistResponse>> {
+    fn complete<'a>(&'a self, req: &'a AssistRequest) -> BoxFuture<'a, Result<AssistResponse>> {
         Box::pin(async move {
             let url = format!("{}/api/chat", self.host.trim_end_matches('/'));
             let body = ChatRequest {
                 model: &self.model,
                 stream: false,
                 messages: vec![
-                    Message { role: "system", content: system_prompt(req) },
-                    Message { role: "user", content: req.prompt.clone() },
+                    Message {
+                        role: "system",
+                        content: system_prompt(req),
+                    },
+                    Message {
+                        role: "user",
+                        content: req.prompt.clone(),
+                    },
                 ],
             };
             let client = reqwest::Client::new();

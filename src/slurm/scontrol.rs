@@ -22,7 +22,7 @@ pub async fn show(runner: &dyn Runner, job_id: &str) -> Result<JobDetails> {
         .run("scontrol", &["show", "job", job_id])
         .await?
         .check("scontrol show")?;
-    Ok(parse_scontrol_show_job(&out.stdout)?)
+    parse_scontrol_show_job(&out.stdout)
 }
 
 pub async fn hold(runner: &dyn Runner, job_id: &str) -> Result<()> {

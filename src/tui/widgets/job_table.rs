@@ -10,20 +10,23 @@ use crate::tui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
     let header_cells = [
-        "JOBID", "PART", "NAME", "USER", "ST", "ELAPSED", "LIMIT", "N", "REASON / NODES",
+        "JOBID",
+        "PART",
+        "NAME",
+        "USER",
+        "ST",
+        "ELAPSED",
+        "LIMIT",
+        "N",
+        "REASON / NODES",
     ];
-    let header = Row::new(header_cells.into_iter().map(|h| {
-        Cell::from(Span::styled(
-            h,
-            Style::default().fg(theme.accent).bold(),
-        ))
-    }));
+    let header = Row::new(
+        header_cells
+            .into_iter()
+            .map(|h| Cell::from(Span::styled(h, Style::default().fg(theme.accent).bold()))),
+    );
 
-    let rows: Vec<Row> = state
-        .jobs
-        .iter()
-        .map(|j| render_row(j, theme))
-        .collect();
+    let rows: Vec<Row> = state.jobs.iter().map(|j| render_row(j, theme)).collect();
 
     let widths = [
         Constraint::Length(10),

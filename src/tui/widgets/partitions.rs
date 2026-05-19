@@ -57,14 +57,22 @@ fn render_row(frame: &mut Frame<'_>, area: Rect, p: &Partition, theme: &Theme) {
     let gpu_pct = if has_gpu {
         let total = p.gpus_per_node.unwrap_or(0) * p.nodes.total;
         let alloc = p.gpus_per_node.unwrap_or(0) * p.nodes.allocated;
-        if total == 0 { 0.0 } else { alloc as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            alloc as f64 / total as f64
+        }
     } else {
         0.0
     };
     let mem_pct = if let Some(per) = p.memory_mb_per_node {
         let total = per * p.nodes.total as u64;
         let alloc = per * p.nodes.allocated as u64;
-        if total == 0 { 0.0 } else { alloc as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            alloc as f64 / total as f64
+        }
     } else {
         0.0
     };

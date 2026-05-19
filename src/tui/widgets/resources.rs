@@ -65,10 +65,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, r: &ClusterResources, theme: &T
 
     let node_line = Line::from(vec![
         Span::styled(format!("{:<5}", "NODE"), theme.footer_style()),
-        Span::styled(format!("alloc {}  ", r.nodes.allocated), Style::default().fg(theme.usage_high)),
-        Span::styled(format!("idle {}  ", r.nodes.idle), Style::default().fg(theme.usage_low)),
-        Span::styled(format!("other {}  ", r.nodes.other), Style::default().fg(theme.usage_med)),
-        Span::styled(format!("total {}", r.nodes.total), Style::default().fg(theme.muted)),
+        Span::styled(
+            format!("alloc {}  ", r.nodes.allocated),
+            Style::default().fg(theme.usage_high),
+        ),
+        Span::styled(
+            format!("idle {}  ", r.nodes.idle),
+            Style::default().fg(theme.usage_low),
+        ),
+        Span::styled(
+            format!("other {}  ", r.nodes.other),
+            Style::default().fg(theme.usage_med),
+        ),
+        Span::styled(
+            format!("total {}", r.nodes.total),
+            Style::default().fg(theme.muted),
+        ),
     ]);
     frame.render_widget(Paragraph::new(node_line), chunks[row]);
 }
@@ -82,7 +94,11 @@ fn bar_line(
     suffix: String,
     theme: &Theme,
 ) {
-    let pct = if total == 0 { 0.0 } else { (done as f64 / total as f64).clamp(0.0, 1.0) };
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    };
     let color = gradient(pct, theme);
 
     // Reserve space for label (5) + " " + "[ ]" + " " + pct (5) + " " + suffix
@@ -98,7 +114,10 @@ fn bar_line(
         Span::styled(fill, Style::default().fg(color)),
         Span::styled(empty, theme.footer_style()),
         Span::raw("] "),
-        Span::styled(format!("{:>3}%", (pct * 100.0) as u32), Style::default().fg(color)),
+        Span::styled(
+            format!("{:>3}%", (pct * 100.0) as u32),
+            Style::default().fg(color),
+        ),
         Span::raw(" "),
         Span::styled(suffix, theme.footer_style()),
     ]);
