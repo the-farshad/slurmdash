@@ -22,6 +22,40 @@ avoid that collision.
 
 ---
 
+## Get started
+
+Install slurmdash on the machine you sit at — **not** on the cluster's
+login node — then point it at any host you can already `ssh` to.
+
+```sh
+# 1. Install — pick whichever fits your setup.
+
+# Option A: prebuilt Linux x86_64 binary (no Rust toolchain needed)
+VERSION=0.1.0
+curl -L -o slurmdash.tar.gz \
+  "https://github.com/the-farshad/slurmdash/releases/download/v${VERSION}/slurmdash-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+tar -xzf slurmdash.tar.gz
+sudo install -m 0755 "slurmdash-${VERSION}-x86_64-unknown-linux-gnu/slurmdash" /usr/local/bin/
+
+# Option B: build from source (Rust 1.85+)
+git clone https://github.com/the-farshad/slurmdash
+cd slurmdash
+cargo install --path .
+
+
+# 2. Connect using an existing ~/.ssh/config Host alias…
+slurmdash --host my-cluster
+
+# …or pass connection details inline:
+slurmdash --host login.example.edu --user alice --ssh-key ~/.ssh/id_ed25519
+```
+
+That's the whole install. The detailed [Install](#install) and
+[Quick start](#quick-start) sections below cover saved profiles,
+the web UI, and one-shot CLI commands.
+
+---
+
 ## Tour
 
 The block-character panels below are real renderings of what each view
@@ -32,7 +66,7 @@ looks like. PNG captures from live terminals can be dropped into
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ slurmdash · frontier · 42 jobs · updated 14:23:01 · sort:state↑                      │
+│ slurmdash · my-cluster · 42 jobs · updated 14:23:01 · sort:state↑                    │
 │                                                                                      │
 │ History (last 60 samples)                                                            │
 │   CPU  ▁▂▃▄▅▆▇█▇▆▆▅▅▄▄▃▃▂▂  67%    GPU  ▄▄▅▅▆▆▇█  82%    MEM  ▁▁▂▂▃▃▄▄  56%          │
@@ -62,7 +96,7 @@ looks like. PNG captures from live terminals can be dropped into
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│ slurmdash · frontier · 42 jobs                                                   │
+│ slurmdash · my-cluster · 42 jobs                                                 │
 │                                                                                  │
 │ Time   [████████████░░░░░░░░] 52%  02:15:00 / 04:00:00                           │
 │                                                                                  │
@@ -159,7 +193,7 @@ gated on user confirmation and audit-logged.
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────┐
-│ slurmdash · frontier · updated 14:23:01                     [readonly]             │
+│ slurmdash · my-cluster · updated 14:23:01                     [readonly]           │
 │                                                                                    │
 │ Resources                       Queue           Ending soon                        │
 │   CPU  ▰▰▰▰▰▰▱▱▱▱  67%            R   ▰▰▰▰ 12    12345 train      -02:15           │
@@ -187,21 +221,47 @@ click a destructive button.
 
 ## Install
 
-Requires Rust **1.85+** (2024 edition) and the system `ssh` binary on
-`$PATH`.
+Install slurmdash on the machine you sit at — your workstation, laptop,
+or any desktop — **not** on the cluster's login node. It runs locally
+and reaches the cluster through your existing SSH setup.
 
-From source — recommended until the crate is published:
+Requires the system `ssh` binary on `$PATH` (OpenSSH 6.7+, which means
+any current Linux / macOS / Windows 10+).
+
+### Option 1 — prebuilt binary (no Rust toolchain needed)
+
+Pick the asset for your platform from the
+[latest release](https://github.com/the-farshad/slurmdash/releases/latest)
+and put `slurmdash` somewhere on your `$PATH`.
+
+Linux x86_64 one-liner:
+
+```sh
+VERSION=0.1.0
+curl -L -o slurmdash.tar.gz \
+  "https://github.com/the-farshad/slurmdash/releases/download/v${VERSION}/slurmdash-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+tar -xzf slurmdash.tar.gz
+sudo install -m 0755 "slurmdash-${VERSION}-x86_64-unknown-linux-gnu/slurmdash" /usr/local/bin/
+slurmdash --version
+```
+
+macOS binaries ship as part of the release workflow matrix; until
+they're attached, macOS users build from source (option 2).
+
+### Option 2 — build from source
+
+Requires Rust 1.85+ (2024 edition).
 
 ```sh
 git clone https://github.com/the-farshad/slurmdash
 cd slurmdash
 cargo install --path .
+slurmdash --version
 ```
 
-Or grab the prebuilt Linux x86_64 binary from the
-[latest release](https://github.com/the-farshad/slurmdash/releases/latest).
+### Option 3 — from crates.io (future)
 
-Future:
+Not published yet; will be:
 
 ```sh
 cargo install slurmdash
@@ -209,25 +269,38 @@ cargo install slurmdash
 
 ## Quick start
 
-```sh
-# 1. Talk to a host already in your ~/.ssh/config
-slurmdash --host login.cluster.edu --user alice
+slurmdash uses your existing OpenSSH setup — anything that works for
+`ssh <host>` works for `slurmdash --host <host>`. That means
+`~/.ssh/config`, ssh-agent, `ProxyJump`, `IdentityFile`, hardware
+keys, and `known_hosts` all apply automatically.
 
-# 2. Or define cluster profiles in ~/.config/slurmdash/config.toml
-slurmdash connect frontier
+### Easiest: use an `~/.ssh/config` alias
 
-# 3. Browser dashboard on a loopback port
-slurmdash web --port 8080
+If you have (or add) a Host block like this in `~/.ssh/config`:
 
-# 4. CLI one-shots
-slurmdash cancel 12345
-slurmdash assist "why is my job pending?" --job 12347
-slurmdash recommend --job-name train_resnet50
+```sshconfig
+Host my-cluster
+    Hostname login.example.edu
+    User alice
+    IdentityFile ~/.ssh/id_ed25519
+    Port 22
 ```
 
-## Configuration
+then:
 
-Path: `~/.config/slurmdash/config.toml`. Minimal example:
+```sh
+slurmdash --host my-cluster
+```
+
+### Pass connection details inline
+
+```sh
+slurmdash --host login.example.edu --user alice --ssh-key ~/.ssh/id_ed25519
+```
+
+### Saved profiles (for multiple clusters)
+
+`~/.config/slurmdash/config.toml`:
 
 ```toml
 [ui]
@@ -239,20 +312,39 @@ mouse = true
 enabled = true
 retention_days = 90
 
-[clusters.frontier]
-host = "login.frontier.olcf.ornl.gov"
-user = "alice"
-ssh_key = "~/.ssh/id_ed25519"
-default_partition = "batch"
-default_account = "project123"
+# Profile that delegates to an ~/.ssh/config Host alias
+[clusters.cluster1]
+host = "my-cluster"
 
+# Or specify everything inline
+[clusters.cluster2]
+host = "login.example.edu"
+user = "alice"
+port = 22
+ssh_key = "~/.ssh/id_ed25519"
+default_partition = "gpu"
+default_account = "project1"
+
+# For development or when running on a node that already has Slurm
 [clusters.local]
-local = true                   # bypass SSH and run Slurm commands directly
+local = true
 ```
 
-Cluster profiles are the source of truth for connection info;
-runtime-mutable UI state (column widths, last view) lives in the local
-database.
+Then:
+
+```sh
+slurmdash connect cluster1
+slurmdash web --port 8080 --cluster cluster2
+```
+
+### One-shot CLI commands
+
+```sh
+slurmdash cancel 12345 --cluster cluster1
+slurmdash assist "why is my job pending?" --job 12347
+slurmdash recommend --job-name train_resnet50
+slurmdash db status
+```
 
 ## Keyboard reference
 
