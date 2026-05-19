@@ -23,7 +23,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::actions::ActionKind;
 use crate::app::{
-    AppState, Confirm, LogKind, LogView, View, apply_sort,
+    AppState, Confirm, LogKind, LogView, ResourceSample, View, apply_sort,
 };
 use crate::cli::Cli;
 use crate::config::Config;
@@ -282,11 +282,14 @@ fn render_dashboard(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(3),
             Constraint::Length(9),
             Constraint::Length(part_rows),
             Constraint::Min(5),
         ])
         .split(area);
+
+    widgets::sparkline::render(frame, chunks[0], &state.resource_history, theme);
 
     let top = Layout::default()
         .direction(Direction::Horizontal)
@@ -295,16 +298,16 @@ fn render_dashboard(
             Constraint::Percentage(30),
             Constraint::Percentage(30),
         ])
-        .split(chunks[0]);
+        .split(chunks[1]);
 
     widgets::resources::render(frame, top[0], &state.resources, theme);
     widgets::queue::render(frame, top[1], &state.jobs, theme);
     widgets::ending_soon::render(frame, top[2], &state.jobs, theme);
 
-    widgets::partitions::render(frame, chunks[1], &state.partitions, theme);
-    widgets::job_table::render(frame, chunks[2], state, theme);
+    widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
+    widgets::job_table::render(frame, chunks[3], state, theme);
 
-    Some(chunks[2])
+    Some(chunks[3])
 }
 
 async fn recv_log_line(stream: Option<&mut LineStream>) -> Option<String> {
@@ -614,7 +617,9 @@ async fn fetch_sinfo(
 ) {
     match sinfo::list_partitions(runner).await {
         Ok(parts) => {
-            state.resources = ClusterResources::from_partitions(&parts);
+            let resources = ClusterResources::from_partitions(&parts);
+            state.push_resource_sample(ResourceSample::from(chrono::Utc::now(), &resources));
+            state.resources = resources;
             if let (Some(d), Some(cid)) = (db, cluster_id) {
                 let _ = snapshots::write_resources(&d.pool, cid, &parts).await;
             }

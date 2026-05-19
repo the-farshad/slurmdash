@@ -2,8 +2,14 @@ use std::collections::VecDeque;
 
 use ratatui::layout::Rect;
 
+use chrono::{DateTime, Utc};
+
 use crate::actions::ActionKind;
 use crate::slurm::model::{ClusterResources, Job, JobDetails, Partition};
+
+/// Max samples retained for the in-memory sparkline history. At the default
+/// 10-second refresh that's a 10-minute trailing window.
+pub const RESOURCE_HISTORY_LIMIT: usize = 60;
 
 const LOG_BUFFER_LIMIT: usize = 5_000;
 
@@ -12,6 +18,7 @@ pub struct AppState {
     pub jobs: Vec<Job>,
     pub partitions: Vec<Partition>,
     pub resources: ClusterResources,
+    pub resource_history: VecDeque<ResourceSample>,
     pub selected: usize,
     pub view: View,
     pub details: Option<JobDetails>,
@@ -207,7 +214,35 @@ impl LogView {
 
 // ---- AppState methods ------------------------------------------------------
 
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceSample {
+    pub when: DateTime<Utc>,
+    pub cpu_pct: f32,
+    pub gpu_pct: f32,
+    pub mem_pct: f32,
+    pub has_gpu: bool,
+}
+
+impl ResourceSample {
+    pub fn from(now: DateTime<Utc>, r: &ClusterResources) -> Self {
+        Self {
+            when: now,
+            cpu_pct: r.cpus.pct_allocated() as f32,
+            gpu_pct: r.gpus.pct_allocated() as f32,
+            mem_pct: r.memory_mb.pct_allocated() as f32,
+            has_gpu: r.gpus.total > 0,
+        }
+    }
+}
+
 impl AppState {
+    pub fn push_resource_sample(&mut self, sample: ResourceSample) {
+        if self.resource_history.len() == RESOURCE_HISTORY_LIMIT {
+            self.resource_history.pop_front();
+        }
+        self.resource_history.push_back(sample);
+    }
+
     pub fn select_next(&mut self) {
         if self.jobs.is_empty() {
             self.selected = 0;

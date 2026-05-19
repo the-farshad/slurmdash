@@ -11,3 +11,4 @@ pub mod partitions;
 pub mod progress;
 pub mod queue;
 pub mod resources;
+pub mod sparkline;
