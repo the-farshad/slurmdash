@@ -750,10 +750,30 @@ fn trigger_refresh(
         let opts = squeue_opts(cli, &state.filter);
         let tx = tx.clone();
         let pool = db.map(|d| d.pool.clone());
+        let cluster_name = handle.cluster_name.clone();
         tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            tracing::info!(cluster = %cluster_name, me = opts.me, "squeue refresh start");
             let result = squeue::list(runner.as_ref(), &opts).await;
+            let elapsed_ms = start.elapsed().as_millis();
+            match &result {
+                Ok(jobs) => tracing::info!(
+                    cluster = %cluster_name,
+                    elapsed_ms = elapsed_ms as u64,
+                    jobs = jobs.len(),
+                    "squeue refresh ok"
+                ),
+                Err(e) => tracing::warn!(
+                    cluster = %cluster_name,
+                    elapsed_ms = elapsed_ms as u64,
+                    error = %e,
+                    "squeue refresh failed"
+                ),
+            }
             if let (Ok(jobs), Some(p), Some(cid)) = (&result, &pool, cluster_id) {
-                let _ = snapshots::write_jobs(p, cid, jobs).await;
+                if let Err(e) = snapshots::write_jobs(p, cid, jobs).await {
+                    tracing::warn!(error = %e, "job_snapshots write failed");
+                }
             }
             let _ = tx.send(LoopMsg::Jobs(result)).await;
         });
@@ -763,10 +783,30 @@ fn trigger_refresh(
         let runner = handle.runner.clone();
         let tx = tx.clone();
         let pool = db.map(|d| d.pool.clone());
+        let cluster_name = handle.cluster_name.clone();
         tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            tracing::info!(cluster = %cluster_name, "sinfo refresh start");
             let result = sinfo::list_partitions(runner.as_ref()).await;
+            let elapsed_ms = start.elapsed().as_millis();
+            match &result {
+                Ok(parts) => tracing::info!(
+                    cluster = %cluster_name,
+                    elapsed_ms = elapsed_ms as u64,
+                    partitions = parts.len(),
+                    "sinfo refresh ok"
+                ),
+                Err(e) => tracing::warn!(
+                    cluster = %cluster_name,
+                    elapsed_ms = elapsed_ms as u64,
+                    error = %e,
+                    "sinfo refresh failed"
+                ),
+            }
             if let (Ok(parts), Some(p), Some(cid)) = (&result, &pool, cluster_id) {
-                let _ = snapshots::write_resources(p, cid, parts).await;
+                if let Err(e) = snapshots::write_resources(p, cid, parts).await {
+                    tracing::warn!(error = %e, "resource_snapshots write failed");
+                }
             }
             let _ = tx.send(LoopMsg::Partitions(result)).await;
         });

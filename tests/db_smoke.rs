@@ -28,6 +28,8 @@ async fn db_migrate_snapshot_and_audit_round_trip() {
         time_limit_seconds: Some(3600),
         nodes: 1,
         reason_or_nodelist: "nid001".into(),
+        submit_time: None,
+        start_time: None,
     }];
     snapshots::write_jobs(&db.pool, cluster_id, &jobs)
         .await

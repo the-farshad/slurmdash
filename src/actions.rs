@@ -62,12 +62,37 @@ pub async fn run(
         None => None,
     };
 
+    tracing::info!(
+        cluster = %cluster_name,
+        action = kind.label(),
+        job_id = job_id,
+        preview = %preview,
+        confirmed = user_confirmed,
+        "destructive action start"
+    );
+    let start = std::time::Instant::now();
     let result = match kind {
         ActionKind::Cancel => scancel::cancel(runner, job_id).await,
         ActionKind::Hold => scontrol::hold(runner, job_id).await,
         ActionKind::Release => scontrol::release(runner, job_id).await,
         ActionKind::Requeue => scontrol::requeue(runner, job_id).await,
     };
+    match &result {
+        Ok(()) => tracing::info!(
+            cluster = %cluster_name,
+            action = kind.label(),
+            job_id = job_id,
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "destructive action ok"
+        ),
+        Err(e) => tracing::warn!(
+            cluster = %cluster_name,
+            action = kind.label(),
+            job_id = job_id,
+            error = %e,
+            "destructive action failed"
+        ),
+    }
 
     if let Some(d) = db {
         let err_string = result.as_ref().err().map(|e| format!("{e}"));

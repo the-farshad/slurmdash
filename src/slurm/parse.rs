@@ -7,8 +7,20 @@ use super::model::{Aiot, Job, JobDetails, Partition};
 use super::state::JobState;
 
 /// Format string passed to `squeue --format=`. Order must match
-/// [`parse_squeue_text`].
-pub const SQUEUE_FORMAT: &str = "%i|%P|%j|%u|%T|%M|%l|%D|%R";
+/// [`parse_squeue_text`]. Fields:
+/// JobID | Partition | Name | User | State | Time | TimeLimit | Nodes |
+/// Reason | SubmitTime | StartTime
+pub const SQUEUE_FORMAT: &str = "%i|%P|%j|%u|%T|%M|%l|%D|%R|%V|%S";
+
+fn parse_slurm_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = s.trim();
+    if s.is_empty() || s == "N/A" || s == "Unknown" || s == "None" {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .map(|n| n.and_utc())
+}
 
 /// Parse `squeue --noheader --format=...` text output.
 ///
@@ -30,6 +42,8 @@ pub fn parse_squeue_text(s: &str) -> Vec<Job> {
         let time_limit = parse_duration(it.next().unwrap_or(""));
         let nodes = it.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
         let reason_or_nodelist = it.next().unwrap_or("").to_string();
+        let submit_time = parse_slurm_datetime(it.next().unwrap_or(""));
+        let start_time = parse_slurm_datetime(it.next().unwrap_or(""));
 
         let (job_id, array_id) = split_array_id(&raw_id);
 
@@ -44,6 +58,8 @@ pub fn parse_squeue_text(s: &str) -> Vec<Job> {
             time_limit_seconds: time_limit,
             nodes,
             reason_or_nodelist,
+            submit_time,
+            start_time,
         });
     }
     jobs
@@ -260,7 +276,7 @@ mod tests {
 
     #[test]
     fn parses_squeue_text_row() {
-        let row = "12345|gpu|train|alice|R|01:02:03|02:00:00|2|nid[0001-0002]";
+        let row = "12345|gpu|train|alice|R|01:02:03|02:00:00|2|nid[0001-0002]|2026-05-19T10:00:00|2026-05-19T10:30:00";
         let jobs = parse_squeue_text(row);
         assert_eq!(jobs.len(), 1);
         let j = &jobs[0];
@@ -271,6 +287,12 @@ mod tests {
         assert_eq!(j.elapsed_seconds, Some(3723));
         assert_eq!(j.time_limit_seconds, Some(7200));
         assert_eq!(j.nodes, 2);
+        assert!(j.submit_time.is_some());
+        assert!(j.start_time.is_some());
+        // wait = start - submit = 30 minutes
+        let s = j.submit_time.unwrap();
+        let t = j.start_time.unwrap();
+        assert_eq!((t - s).num_minutes(), 30);
     }
 
     #[test]

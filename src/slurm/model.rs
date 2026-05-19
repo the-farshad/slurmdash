@@ -129,6 +129,30 @@ pub struct Job {
     pub time_limit_seconds: Option<u64>,
     pub nodes: u32,
     pub reason_or_nodelist: String,
+    /// Wall-clock submit time as reported by Slurm (`%V` in squeue format).
+    pub submit_time: Option<DateTime<Utc>>,
+    /// Wall-clock start time (`%S`). For pending jobs this is the
+    /// scheduled start estimate (often `N/A`).
+    pub start_time: Option<DateTime<Utc>>,
+}
+
+impl Job {
+    /// Total time the job has been waiting in the queue (seconds).
+    ///
+    /// - For RUNNING jobs: `start - submit`.
+    /// - For PENDING jobs: `now - submit` (wait so far).
+    /// - For other states: `None`.
+    pub fn wait_seconds(&self) -> Option<u64> {
+        let submit = self.submit_time?;
+        match self.state {
+            JobState::Running => {
+                let start = self.start_time?;
+                (start - submit).num_seconds().try_into().ok()
+            }
+            JobState::Pending => (Utc::now() - submit).num_seconds().try_into().ok(),
+            _ => None,
+        }
+    }
 }
 
 /// Detailed view of a single job, populated from `scontrol show job`.

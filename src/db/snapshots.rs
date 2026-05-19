@@ -74,8 +74,8 @@ pub async fn write_jobs(pool: &sqlx::SqlitePool, cluster_id: i64, jobs: &[Job]) 
         sqlx::query(
             "INSERT INTO job_snapshots \
              (cluster_id, job_id, array_id, job_name, username, partition_name, state, \
-              reason, elapsed_seconds, time_limit_seconds) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              reason, elapsed_seconds, time_limit_seconds, submit_time, start_time) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(cluster_id)
         .bind(&j.job_id)
@@ -87,6 +87,8 @@ pub async fn write_jobs(pool: &sqlx::SqlitePool, cluster_id: i64, jobs: &[Job]) 
         .bind(&j.reason_or_nodelist)
         .bind(j.elapsed_seconds.map(|v| v as i64))
         .bind(j.time_limit_seconds.map(|v| v as i64))
+        .bind(j.submit_time.map(|t| t.to_rfc3339()))
+        .bind(j.start_time.map(|t| t.to_rfc3339()))
         .execute(&mut *tx)
         .await?;
     }
