@@ -377,10 +377,12 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
             KeyCode::Esc => {
                 state.assist = None;
             }
-            KeyCode::Enter => {
-                if !dialog.in_flight && dialog.response.is_none() && !dialog.input.is_empty() {
-                    return Intent::AssistSubmit;
-                }
+            KeyCode::Enter
+                if !dialog.in_flight
+                    && dialog.response.is_none()
+                    && !dialog.input.is_empty() =>
+            {
+                return Intent::AssistSubmit;
             }
             KeyCode::Backspace => {
                 dialog.input.pop();
@@ -391,10 +393,8 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
                     return Intent::AssistRun(idx - 1);
                 }
             }
-            KeyCode::Char(c) => {
-                if !dialog.in_flight {
-                    dialog.input.push(c);
-                }
+            KeyCode::Char(c) if !dialog.in_flight => {
+                dialog.input.push(c);
             }
             _ => {}
         }

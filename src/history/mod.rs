@@ -109,7 +109,7 @@ pub async fn job_name_stats(
     }
 
     let mut out: Vec<JobNameStats> = by_name.into_values().collect();
-    out.sort_by(|a, b| b.runs.cmp(&a.runs));
+    out.sort_by_key(|s| std::cmp::Reverse(s.runs));
     Ok(out)
 }
 
