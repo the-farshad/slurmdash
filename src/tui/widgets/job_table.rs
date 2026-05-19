@@ -276,16 +276,39 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String])
     ])
 }
 
-/// Render the ELAPSED cell. For RUNNING jobs with a known time limit, this
-/// is a 6-cell progress bar (`▰▰▰▱▱▱`) coloured by how much of the limit is
-/// used, followed by the duration text — gives an instant visual cue for
-/// "how close is this job to wallclock timeout" without needing to read
-/// LIMIT and do arithmetic. Other states show just the duration.
+/// Render the ELAPSED cell.
+///
+/// - RUNNING jobs: a 6-cell ▰▰▰▱▱▱ progress bar coloured by how much of
+///   the time limit is used, followed by the duration text. Gives an
+///   instant visual cue for "how close is this job to wallclock
+///   timeout" without needing to read LIMIT.
+/// - PENDING jobs: if Slurm gave us an estimated start time in the
+///   future, show `→ Xm` (pending-color) so the user can see when the
+///   scheduler thinks it will dispatch — far more useful than "-".
+/// - Anything else: just the duration (or "-").
 fn render_elapsed_cell<'a>(j: &'a Job, theme: &Theme) -> Cell<'a> {
     let elapsed_text = j
         .elapsed_seconds
         .map(crate::tui::format::hms)
         .unwrap_or_else(|| "-".into());
+
+    if matches!(j.state, JobState::Pending)
+        && let Some(start) = j.start_time
+    {
+        let now = chrono::Utc::now();
+        if start > now {
+            let secs = (start - now).num_seconds().max(0) as u64;
+            return Cell::from(Line::from(vec![
+                Span::styled("→ ", Style::default().fg(theme.pending)),
+                Span::styled(
+                    short_dur(secs),
+                    Style::default()
+                        .fg(theme.pending)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
 
     let (Some(used), Some(limit)) = (j.elapsed_seconds, j.time_limit_seconds) else {
         return Cell::from(elapsed_text);
