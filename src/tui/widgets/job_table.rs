@@ -26,7 +26,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             ""
         }
     };
-    let header_titles: [String; 10] = [
+    // Leading empty cell aligns with the per-row state ribbon below.
+    let header_titles: [String; 11] = [
+        String::new(),
         format!("JOBID{}", arrow(SortKey::JobId)),
         format!("PART{}", arrow(SortKey::Partition)),
         format!("NAME{}", arrow(SortKey::Name)),
@@ -62,9 +64,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         })
         .collect();
 
+    // Width 1 ribbon col leads; each row paints a single block in the row's
+    // state color to give a vertical state-coloured stripe down the table.
     // ELAPSED widens to 14 to fit an inline progress bar (6 cells) + space +
     // up to a 6-char duration text ("99h59m"). ST widens to 5 for "glyph + short".
     let widths = [
+        Constraint::Length(1),
         Constraint::Length(10),
         Constraint::Length(10),
         Constraint::Length(20),
@@ -190,7 +195,10 @@ fn render_group_row<'a>(
     // REASON: count of jobs as a subtle summary marker.
     let reason_text = format!("{} jobs", summary.count);
 
+    let ribbon = Cell::from(Span::styled("▎", bold_accent));
+
     Row::new(vec![
+        ribbon,
         jobid_cell,
         Cell::from(Span::styled(part_text, muted)),
         Cell::from(Span::styled(name_text, muted)),
@@ -244,7 +252,13 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String])
         highlight_spans(&id_text, terms, theme)
     };
 
+    // Per-row state ribbon at the leftmost data column — gives the table a
+    // colored vertical stripe that lets the eye chunk runs of same-state
+    // rows without reading the ST column.
+    let ribbon = Cell::from(Span::styled("▎", state_style));
+
     Row::new(vec![
+        ribbon,
         Cell::from(Line::from(id_spans)),
         Cell::from(Line::from(highlight_spans(&j.partition, terms, theme))),
         Cell::from(Line::from(highlight_spans(&j.name, terms, theme))),
