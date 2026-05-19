@@ -246,6 +246,9 @@ async fn run_loop(
                             });
                         }
                     }
+                    Intent::SettingsTest => {
+                        run_settings_test(&mut state, config).await;
+                    }
                 }
                 if state.should_quit { break; }
             }
@@ -308,6 +311,9 @@ fn draw(
             }
             View::Statistics => {
                 render_statistics(frame, outer[1], state, theme);
+            }
+            View::Settings => {
+                widgets::settings::render(frame, outer[1], state, theme);
             }
             View::Details => {
                 widgets::details::render(frame, outer[1], state, theme);
@@ -439,6 +445,8 @@ enum Intent {
     AssistRun(usize),
     /// User pressed `T` — persist new theme to settings.
     ThemeChanged,
+    /// User pressed `t` in Settings — probe the configured LLM.
+    SettingsTest,
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
@@ -575,13 +583,46 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
             state.view = View::Statistics;
             return Intent::None;
         }
+        KeyCode::Char(',') => {
+            state.view = View::Settings;
+            return Intent::None;
+        }
         _ => {}
     }
 
     match state.view {
         View::Details => handle_key_details(key, state),
         View::Logs => handle_key_logs(key, state),
+        View::Settings => handle_key_settings(key, state),
         View::Dashboard | View::Jobs | View::Statistics => handle_key_jobs(key, state),
+    }
+}
+
+fn handle_key_settings(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+            state.view = View::Dashboard;
+            Intent::None
+        }
+        KeyCode::Char('T') => {
+            state.theme_name = Theme::next_name(&state.theme_name).to_string();
+            Intent::ThemeChanged
+        }
+        KeyCode::Char('t') => {
+            if !state.settings.test_in_flight {
+                state.settings.test_in_flight = true;
+                state.settings.test_result = None;
+                state.settings.test_error = None;
+                Intent::SettingsTest
+            } else {
+                Intent::None
+            }
+        }
+        KeyCode::Char('?') => {
+            state.show_help = true;
+            Intent::None
+        }
+        _ => Intent::None,
     }
 }
 
@@ -931,6 +972,31 @@ fn handle_loop_msg(
         LoopMsg::Partitions(Err(e)) => {
             state.refresh.sinfo_in_flight = false;
             tracing::warn!(error = %e, "sinfo refresh failed");
+        }
+    }
+}
+
+/// Send a one-line probe through the configured LLM and stash the result
+/// in `state.settings`. Used by the Settings view's `t` test.
+async fn run_settings_test(state: &mut AppState, config: &Config) {
+    let req = AssistRequest {
+        prompt: "Say hello in one short sentence.".to_string(),
+        job_context: None,
+        cluster_name: "test".to_string(),
+        jobs_snapshot: Vec::new(),
+        partitions: Vec::new(),
+        history_summary: None,
+    };
+    let result = crate::assist::assist(req, config).await;
+    state.settings.test_in_flight = false;
+    match result {
+        Ok(r) => {
+            state.settings.test_result = Some(format!("[{} · {}] {}", r.provider, r.model, r.text));
+            state.settings.test_error = None;
+        }
+        Err(e) => {
+            state.settings.test_error = Some(format!("{e}"));
+            state.settings.test_result = None;
         }
     }
 }

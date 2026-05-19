@@ -14,6 +14,7 @@ pub mod partitions;
 pub mod progress;
 pub mod queue;
 pub mod resources;
+pub mod settings;
 pub mod sparkline;
 pub mod top_users;
 pub mod wait_distribution;

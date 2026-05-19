@@ -94,6 +94,8 @@ pub struct AppState {
     pub search_input: Option<String>,
 
     pub assist: Option<AssistDialog>,
+
+    pub settings: SettingsState,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -195,6 +197,15 @@ pub enum View {
     Statistics,
     Details,
     Logs,
+    /// In-app settings (LLM provider/model, theme) with a live `t` test.
+    Settings,
+}
+
+#[derive(Debug, Default)]
+pub struct SettingsState {
+    pub test_in_flight: bool,
+    pub test_result: Option<String>,
+    pub test_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]

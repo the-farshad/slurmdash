@@ -54,6 +54,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
         View::Dashboard | View::Jobs | View::Statistics => &JOBS_HINTS,
         View::Details => &DETAILS_HINTS,
         View::Logs => &LOGS_HINTS,
+        View::Settings => &SETTINGS_HINTS,
     };
 
     let mut spans = Vec::with_capacity(hints.len() * 4 + 1);
@@ -161,6 +162,29 @@ const JOBS_HINTS: [Hint; 17] = [
     Hint {
         key: "?",
         label: "help",
+        kind: HintKind::Normal,
+    },
+    Hint {
+        key: "q",
+        label: "quit",
+        kind: HintKind::Normal,
+    },
+];
+
+const SETTINGS_HINTS: [Hint; 4] = [
+    Hint {
+        key: "t",
+        label: "test LLM",
+        kind: HintKind::Special,
+    },
+    Hint {
+        key: "T",
+        label: "theme",
+        kind: HintKind::Normal,
+    },
+    Hint {
+        key: "Esc",
+        label: "back",
         kind: HintKind::Normal,
     },
     Hint {
