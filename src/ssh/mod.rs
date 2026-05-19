@@ -113,10 +113,54 @@ pub async fn build_runner(cli: &Cli, config: &Config) -> Result<RunnerHandle> {
         .clone()
         .context("cluster profile has no `host` and is not marked `local = true`")?;
 
+    // The `openssh` crate spawns the system `ssh` binary — surface a clear
+    // hint up front instead of an obscure "No such file or directory" deep
+    // inside the connect path. Skipped on local mode (handled above).
+    check_ssh_available().context("checking for ssh in PATH")?;
+
     let runner = remote::RemoteRunner::connect(&host, profile).await?;
     Ok(RunnerHandle {
         runner: Arc::new(runner),
         cluster_name: name,
         is_local: false,
     })
+}
+
+/// Verify the system `ssh` client is installed. We don't try to run it;
+/// just confirm a candidate path exists in `PATH`. Helpful because on a
+/// fresh box `cargo install slurmdash` succeeds but the resulting binary
+/// fails at the first connect with an opaque "spawning ssh: …" error.
+fn check_ssh_available() -> Result<()> {
+    if ssh_in_path() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "could not find `ssh` in $PATH.\n\n\
+         slurmdash uses the system OpenSSH client to reach remote clusters.\n\
+         Install it with one of:\n  \
+         - Debian / Ubuntu:  sudo apt install openssh-client\n  \
+         - Fedora / RHEL:    sudo dnf install openssh-clients\n  \
+         - Arch:             sudo pacman -S openssh\n  \
+         - macOS:            already included with the system\n  \
+         - Windows:          install OpenSSH via Settings → Apps → Optional features"
+    )
+}
+
+fn ssh_in_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let exe_names: &[&str] = if cfg!(windows) {
+        &["ssh.exe", "ssh"]
+    } else {
+        &["ssh"]
+    };
+    for dir in std::env::split_paths(&path) {
+        for name in exe_names {
+            if dir.join(name).is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }

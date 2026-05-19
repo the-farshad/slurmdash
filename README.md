@@ -28,10 +28,19 @@ Install slurmdash on the machine you sit at — your workstation or any
 desktop you SSH from — **not** on the cluster's login node. It runs
 locally and reaches the cluster through your existing SSH setup.
 
-**Requires:** the system `ssh` binary on `$PATH` (OpenSSH 6.7+, which
-means any current Linux, macOS, or Windows 10+).
+### Prerequisites
 
-Pick one of:
+| Component | Why | How to get it |
+| --- | --- | --- |
+| **OpenSSH client** (`ssh`) | reaches the remote cluster | `apt install openssh-client` / `dnf install openssh-clients` / built-in on macOS / Windows 10+ optional feature |
+| **Rust 1.85+** (only for the source / `cargo install` paths) | builds the binary | <https://rustup.rs> — one-line installer |
+| **OpenSSL / sqlite headers** (only for some source builds on Linux) | linked by sqlx + rustls | `apt install libssl-dev libsqlite3-dev` / `dnf install openssl-devel sqlite-devel` |
+| **Ollama** (optional, default LLM provider) | powers the in-app Ctrl+K assistant | <https://ollama.com> — `ollama pull llama3.2` after install |
+
+Skipping the prereqs and running `cargo install slurmdash` without Rust
+will fail with `cargo: command not found`. Install Rust first.
+
+Pick one install path below:
 
 #### a. Prebuilt binary (no Rust toolchain needed)
 

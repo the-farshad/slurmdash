@@ -60,7 +60,7 @@ impl Provider for OllamaProvider {
                 .json(&body)
                 .send()
                 .await
-                .with_context(|| format!("POST {url}"))?;
+                .map_err(|e| friendly_ollama_error(&self.host, &e))?;
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
@@ -75,6 +75,32 @@ impl Provider for OllamaProvider {
                 model: self.model.clone(),
             })
         })
+    }
+}
+
+/// Rewrite reqwest connect errors against Ollama into something the
+/// user can act on. The default reqwest message ("error sending
+/// request for url …: error trying to connect: tcp connect error …
+/// Connection refused") buries the actionable bit; we lead with what
+/// to do.
+fn friendly_ollama_error(host: &str, e: &reqwest::Error) -> anyhow::Error {
+    let is_connect_error =
+        e.is_connect() || e.is_timeout() || format!("{e}").contains("Connection refused");
+    if is_connect_error {
+        anyhow::anyhow!(
+            "could not reach Ollama at {host}.\n\n\
+             slurmdash defaults to the local Ollama server for LLM features.\n\
+             To fix this:\n  \
+             1. Install Ollama from https://ollama.com (one-line installer on Linux/macOS)\n  \
+             2. Start it: `ollama serve` (or it auto-starts on macOS)\n  \
+             3. Pull a model: `ollama pull llama3.2`\n\n\
+             Or pick a different provider:\n  \
+             - export SLURMDASH_LLM_PROVIDER=anthropic + ANTHROPIC_API_KEY\n  \
+             - or set OLLAMA_HOST to a remote Ollama server\n\n\
+             (Reqwest detail: {e})"
+        )
+    } else {
+        anyhow::anyhow!("POST {host}/api/chat failed: {e}")
     }
 }
 
