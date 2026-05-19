@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
-use crate::app::{AppState, DisplayRow, FilterMode, GroupBy};
+use crate::app::{AppState, DisplayRow, FilterMode, GroupBy, GroupSummary};
 use crate::slurm::model::Job;
 use crate::tui::theme::Theme;
 
@@ -34,17 +34,18 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     );
 
     let grouped = state.group_by != GroupBy::None;
+    let terms = state.current_filter().highlight_terms();
     let rows: Vec<Row> = state
         .display_rows
         .iter()
         .map(|r| match r {
             DisplayRow::Group {
                 key,
-                count,
                 collapsed,
-            } => render_group_row(state.group_by, key, *count, *collapsed, theme),
+                summary,
+            } => render_group_row(state.group_by, key, summary, *collapsed, theme),
             DisplayRow::JobIndex(idx) => match state.jobs.get(*idx) {
-                Some(j) => render_job_row(j, theme, grouped),
+                Some(j) => render_job_row(j, theme, grouped, &terms),
                 None => Row::new(vec![Cell::from("")]),
             },
         })
@@ -80,24 +81,76 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
 fn render_group_row<'a>(
     kind: GroupBy,
     key: &'a str,
-    count: u32,
+    summary: &'a GroupSummary,
     collapsed: bool,
     theme: &Theme,
 ) -> Row<'a> {
     let arrow = if collapsed { "▶" } else { "▼" };
-    let label = format!(
-        " {arrow}  {key}    {count} {} ({})",
-        if count == 1 { "job" } else { "jobs" },
-        kind.label()
-    );
-    let cell = Cell::from(Span::styled(
-        label,
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
+    let count = summary.count;
+
+    // Header cell: arrow + key + total count.
+    let mut spans = vec![
+        Span::styled(
+            format!(" {arrow}  "),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{key:<14.14}"),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{count:>3} {}", if count == 1 { "job " } else { "jobs" }),
+            Style::default().fg(theme.muted),
+        ),
+        Span::raw("   "),
+    ];
+
+    // Node count.
+    if summary.nodes_total > 0 {
+        spans.push(Span::styled(
+            format!("{:>3}N ", summary.nodes_total),
+            Style::default().fg(theme.muted),
+        ));
+    }
+
+    // State breakdown — only render non-zero buckets, in priority order.
+    let state_chips: [(u32, &str, ratatui::style::Color); 6] = [
+        (summary.running, "R", theme.running),
+        (summary.pending, "PD", theme.pending),
+        (summary.completing, "CG", theme.completing),
+        (summary.held, "H", theme.held),
+        (summary.failed, "F", theme.failed),
+        (summary.completed, "CD", theme.completed),
+    ];
+    for (n, label, color) in state_chips {
+        if n == 0 {
+            continue;
+        }
+        spans.push(Span::styled(
+            format!("{n}{label} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Average wait.
+    if let Some(w) = summary.avg_wait_seconds {
+        spans.push(Span::styled(
+            format!("· ~{} wait ", short_dur(w)),
+            Style::default().fg(theme.muted),
+        ));
+    }
+
+    spans.push(Span::styled(
+        format!("({})", kind.label()),
+        Style::default().fg(theme.border),
     ));
+
     Row::new(vec![
-        cell,
+        Cell::from(ratatui::text::Line::from(spans)),
         Cell::from(""),
         Cell::from(""),
         Cell::from(""),
@@ -110,7 +163,7 @@ fn render_group_row<'a>(
     ])
 }
 
-fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool) -> Row<'a> {
+fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String]) -> Row<'a> {
     let state_cell = Cell::from(Span::styled(
         j.state.short().to_string(),
         theme.job_state_style(&j.state),
@@ -129,24 +182,80 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool) -> Row<'a> {
         .map(short_dur)
         .unwrap_or_else(|| "-".into());
 
-    let id_cell = if indent {
-        Cell::from(format!("  {}", j.job_id))
+    let id_text = if indent {
+        format!("  {}", j.job_id)
     } else {
-        Cell::from(j.job_id.clone())
+        j.job_id.clone()
     };
 
     Row::new(vec![
-        id_cell,
-        Cell::from(j.partition.clone()),
-        Cell::from(Line::from(Span::raw(j.name.clone()))),
-        Cell::from(j.user.clone()),
+        Cell::from(Line::from(highlight_spans(&id_text, terms, theme))),
+        Cell::from(Line::from(highlight_spans(&j.partition, terms, theme))),
+        Cell::from(Line::from(highlight_spans(&j.name, terms, theme))),
+        Cell::from(Line::from(highlight_spans(&j.user, terms, theme))),
         state_cell,
         Cell::from(elapsed),
         Cell::from(limit),
         Cell::from(wait),
         Cell::from(j.nodes.to_string()),
-        Cell::from(j.reason_or_nodelist.clone()),
+        Cell::from(Line::from(highlight_spans(
+            &j.reason_or_nodelist,
+            terms,
+            theme,
+        ))),
     ])
+}
+
+/// Split `text` into spans, highlighting any (case-insensitive) substring
+/// match of any term in `terms`. Used so the user can see what their `/`
+/// filter is hitting inside each row.
+fn highlight_spans<'a>(text: &str, terms: &[String], theme: &Theme) -> Vec<Span<'a>> {
+    if terms.is_empty() || text.is_empty() {
+        return vec![Span::raw(text.to_string())];
+    }
+    let lower = text.to_lowercase();
+    let mut out: Vec<Span<'a>> = Vec::new();
+    let mut i = 0usize;
+    let bytes = text.as_bytes();
+    while i < bytes.len() {
+        // Earliest term match starting at or after i.
+        let mut best: Option<(usize, usize)> = None;
+        for term in terms {
+            let t = term.to_lowercase();
+            if t.is_empty() {
+                continue;
+            }
+            if let Some(pos) = lower[i..].find(&t) {
+                let abs = i + pos;
+                let end = abs + t.len();
+                match best {
+                    None => best = Some((abs, end)),
+                    Some((b, _)) if abs < b => best = Some((abs, end)),
+                    _ => {}
+                }
+            }
+        }
+        match best {
+            Some((start, end)) => {
+                if start > i {
+                    out.push(Span::raw(text[i..start].to_string()));
+                }
+                out.push(Span::styled(
+                    text[start..end].to_string(),
+                    Style::default()
+                        .fg(theme.bg)
+                        .bg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                i = end;
+            }
+            None => {
+                out.push(Span::raw(text[i..].to_string()));
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Render a contextual empty-state message in place of the table. Explains

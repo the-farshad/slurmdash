@@ -136,11 +136,29 @@ impl GroupBy {
 pub enum DisplayRow {
     Group {
         key: String,
-        count: u32,
         collapsed: bool,
+        summary: GroupSummary,
     },
     /// Index into [`AppState::jobs`].
     JobIndex(usize),
+}
+
+/// Aggregate statistics for a group of jobs, rendered inline on the group
+/// header row.
+#[derive(Debug, Clone, Default)]
+pub struct GroupSummary {
+    pub count: u32,
+    /// Total node count across all jobs in this group.
+    pub nodes_total: u32,
+    /// State distribution — the top two states populate the header chip.
+    pub running: u32,
+    pub pending: u32,
+    pub failed: u32,
+    pub completing: u32,
+    pub held: u32,
+    pub completed: u32,
+    /// Average wait time across jobs that have a known wait.
+    pub avg_wait_seconds: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -345,18 +363,107 @@ impl ResourceSample {
     }
 }
 
-fn matches_text_filter(j: &Job, filter: Option<&str>) -> bool {
-    let Some(q) = filter else { return true };
-    let q = q.trim();
-    if q.is_empty() {
-        return true;
+/// Parsed form of the user's `/` filter. Each non-empty Vec is an AND
+/// constraint; within a Vec multiple values are also AND-combined (so
+/// `user:alice user:bob` matches nothing — which is what you want).
+///
+/// Free terms (bare words) match any of: job_id / name / user / partition /
+/// reason — case-insensitive substring. Field-prefixed terms (`user:alice`,
+/// `state:R`) target a single column.
+#[derive(Debug, Default, Clone)]
+pub struct ParsedFilter {
+    pub free: Vec<String>,
+    pub user: Vec<String>,
+    pub partition: Vec<String>,
+    pub state: Vec<String>,
+    pub name: Vec<String>,
+    pub job_id: Vec<String>,
+    pub reason: Vec<String>,
+}
+
+impl ParsedFilter {
+    pub fn is_empty(&self) -> bool {
+        self.free.is_empty()
+            && self.user.is_empty()
+            && self.partition.is_empty()
+            && self.state.is_empty()
+            && self.name.is_empty()
+            && self.job_id.is_empty()
+            && self.reason.is_empty()
     }
-    let q = q.to_lowercase();
-    j.job_id.to_lowercase().contains(&q)
-        || j.name.to_lowercase().contains(&q)
-        || j.user.to_lowercase().contains(&q)
-        || j.partition.to_lowercase().contains(&q)
-        || j.reason_or_nodelist.to_lowercase().contains(&q)
+
+    /// All term strings concatenated (lowercased), used by the match
+    /// highlighter to know what to underline in cells.
+    pub fn highlight_terms(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for v in [
+            &self.free,
+            &self.user,
+            &self.partition,
+            &self.state,
+            &self.name,
+            &self.job_id,
+            &self.reason,
+        ] {
+            for s in v {
+                let s = s.to_lowercase();
+                if !s.is_empty() {
+                    out.push(s);
+                }
+            }
+        }
+        out
+    }
+}
+
+pub fn parse_filter(s: &str) -> ParsedFilter {
+    let mut p = ParsedFilter::default();
+    for token in s.split_whitespace() {
+        if let Some((field, value)) = token.split_once(':') {
+            let v = value.to_string();
+            if v.is_empty() {
+                continue;
+            }
+            match field.to_lowercase().as_str() {
+                "user" | "u" => p.user.push(v),
+                "partition" | "part" | "p" => p.partition.push(v),
+                "state" | "st" | "s" => p.state.push(v.to_uppercase()),
+                "name" | "n" => p.name.push(v),
+                "id" | "jobid" | "job" => p.job_id.push(v),
+                "reason" | "r" => p.reason.push(v),
+                // Unknown field → treat the whole token as free text.
+                _ => p.free.push(token.to_string()),
+            }
+        } else {
+            p.free.push(token.to_string());
+        }
+    }
+    p
+}
+
+fn matches_parsed(j: &Job, p: &ParsedFilter) -> bool {
+    fn lc_contains(haystack: &str, needle: &str) -> bool {
+        haystack.to_lowercase().contains(&needle.to_lowercase())
+    }
+
+    p.free.iter().all(|q| {
+        lc_contains(&j.job_id, q)
+            || lc_contains(&j.name, q)
+            || lc_contains(&j.user, q)
+            || lc_contains(&j.partition, q)
+            || lc_contains(&j.reason_or_nodelist, q)
+    }) && p.user.iter().all(|q| lc_contains(&j.user, q))
+        && p.partition.iter().all(|q| lc_contains(&j.partition, q))
+        && p.state.iter().all(|q| {
+            // Match either short code (R / PD) or full name (RUNNING).
+            j.state.short().eq_ignore_ascii_case(q)
+                || format!("{:?}", j.state).eq_ignore_ascii_case(q)
+        })
+        && p.name.iter().all(|q| lc_contains(&j.name, q))
+        && p.job_id.iter().all(|q| lc_contains(&j.job_id, q))
+        && p.reason
+            .iter()
+            .all(|q| lc_contains(&j.reason_or_nodelist, q))
 }
 
 fn build_grouped<F: Fn(&Job) -> String>(
@@ -370,12 +477,12 @@ fn build_grouped<F: Fn(&Job) -> String>(
     }
     let mut out = Vec::new();
     for (key, members) in groups {
-        let count = members.len() as u32;
         let collapsed = collapsed.contains(&key);
+        let summary = build_summary(jobs, &members);
         out.push(DisplayRow::Group {
             key,
-            count,
             collapsed,
+            summary,
         });
         if !collapsed {
             for idx in members {
@@ -386,21 +493,70 @@ fn build_grouped<F: Fn(&Job) -> String>(
     out
 }
 
+fn build_summary(jobs: &[Job], member_indices: &[usize]) -> GroupSummary {
+    use crate::slurm::state::JobState;
+    let mut s = GroupSummary::default();
+    let mut wait_sum: u64 = 0;
+    let mut wait_n: u32 = 0;
+    for idx in member_indices {
+        let Some(j) = jobs.get(*idx) else { continue };
+        s.count += 1;
+        s.nodes_total = s.nodes_total.saturating_add(j.nodes);
+        match j.state {
+            JobState::Running => s.running += 1,
+            JobState::Pending => s.pending += 1,
+            JobState::Failed
+            | JobState::Timeout
+            | JobState::NodeFail
+            | JobState::BootFail
+            | JobState::Deadline
+            | JobState::OutOfMemory => s.failed += 1,
+            JobState::Completing => s.completing += 1,
+            JobState::Held => s.held += 1,
+            JobState::Completed => s.completed += 1,
+            _ => {}
+        }
+        if let Some(w) = j.wait_seconds() {
+            wait_sum = wait_sum.saturating_add(w);
+            wait_n = wait_n.saturating_add(1);
+        }
+    }
+    if wait_n > 0 {
+        s.avg_wait_seconds = Some(wait_sum / wait_n as u64);
+    }
+    s
+}
+
 impl AppState {
     /// Rebuild `jobs` from `all_jobs` using the current `text_filter`,
     /// reapply `sort`, regenerate `display_rows`, and clamp the selection.
     /// Call after `all_jobs` / `text_filter` / `sort` / `group_by` /
     /// `collapsed_groups` changes.
     pub fn rebuild_filtered_jobs(&mut self) {
-        let filter = self.text_filter.as_deref();
-        self.jobs = self
-            .all_jobs
-            .iter()
-            .filter(|j| matches_text_filter(j, filter))
-            .cloned()
-            .collect();
+        let parsed = self
+            .text_filter
+            .as_deref()
+            .map(parse_filter)
+            .unwrap_or_default();
+        self.jobs = if parsed.is_empty() {
+            self.all_jobs.clone()
+        } else {
+            self.all_jobs
+                .iter()
+                .filter(|j| matches_parsed(j, &parsed))
+                .cloned()
+                .collect()
+        };
         apply_sort(&mut self.jobs, self.sort);
         self.rebuild_display_rows();
+    }
+
+    /// Current parsed filter (for match-highlighting in widgets).
+    pub fn current_filter(&self) -> ParsedFilter {
+        self.text_filter
+            .as_deref()
+            .map(parse_filter)
+            .unwrap_or_default()
     }
 
     /// Recompute [`display_rows`] from `jobs` + `group_by` + `collapsed_groups`.
