@@ -1,9 +1,13 @@
 # slurmdash
 
+[![ci](https://github.com/the-farshad/slurmdash/actions/workflows/ci.yml/badge.svg)](https://github.com/the-farshad/slurmdash/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/the-farshad/slurmdash?sort=semver)](https://github.com/the-farshad/slurmdash/releases)
+[![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+
 > Terminal user interface for the Slurm workload manager.
 
-`slurmdash` runs on your laptop and gives you a live dashboard for the
-clusters you SSH into — job table, resource bars, log tailing, safe
+`slurmdash` runs on your machine and gives you a live dashboard for the
+Slurm clusters you SSH into — job table, resource bars, log tailing, safe
 cancel/hold/release, a built-in LLM assistant, and an optional local web
 UI. No software is required on the cluster beyond what Slurm itself
 already installs.
@@ -27,62 +31,60 @@ looks like. PNG captures from live terminals can be dropped into
 ### Dashboard (default view)
 
 ```text
-┌ slurmdash  frontier  42 jobs  updated 14:23:01  sort:state↑ ──────────────────────┐
-│                                                                                    │
-│ ┌ History (last 60 samples) ──────────────────────────────────────────────────┐    │
-│ │ CPU  ▁▂▃▄▅▆▇█▇▆▆▅▅▄▄▃▃▂▂  67%   GPU  ▄▄▅▅▆▆▇█  82%   MEM  ▁▁▂▂▃▃▄▄  56%  │    │
-│ └─────────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                    │
-│ ┌ Resources ──────────┐ ┌ Queue ──────────┐ ┌ Ending soon ─────────────────────┐  │
-│ │ CPU  [████████░░] 67% │ │ R   ████████ 12 │ │ 12345 train         -02:15      │  │
-│ │ GPU  [█████████░] 82% │ │ PD  █████    5  │ │ 12346 inference     -08:42      │  │
-│ │ MEM  [██████░░░░] 56% │ │ CD  ██       2  │ │ 12350 preprocess    -22:18      │  │
-│ │ NODE alloc:12 idle:4  │ │ F   █        1  │ │                                 │  │
-│ └───────────────────────┘ └─────────────────┘ └─────────────────────────────────┘  │
-│                                                                                    │
-│ ┌ Partitions ───────────────────────────────────────────────────────────────────┐  │
-│ │ gpu-a100   cpu ████████░ 80%  gpu ██████░░ 60%  mem ████░░░░ 40%  12/16 nodes │  │
-│ │ gpu-h100   cpu ███████░░ 75%  gpu █████████ 90%  mem ███████░ 70%  8/8  nodes │  │
-│ │ cpu        cpu ███░░░░░░ 34%  mem ███░░░░░░ 30%                   4/12 nodes │  │
-│ └───────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                    │
-│ ┌ JOBID    PART      NAME           USER     ST  ELAPSED   LIMIT     N  REASON  ┐  │
-│ │ 12345    gpu-a100  train_resnet50 alice    R   02:15:00  04:00:00  2  nid001  │  │
-│ │ 12346    gpu-h100  inference      bob      R   08:42:00  12:00:00  1  nid002  │  │
-│ │ 12347    cpu       preprocess     alice    PD  --        02:00:00  1  Priority│  │
-│ │ 12348    gpu-a100  finetune       carol    PD  --        06:00:00  4  Resources│ │
-│ └───────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                    │
-│ 1 dash  2 jobs  ↑↓ select  Enter details  l logs  c cancel  ^K assist  ? help  q  │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ slurmdash · frontier · 42 jobs · updated 14:23:01 · sort:state↑                      │
+│                                                                                      │
+│ History (last 60 samples)                                                            │
+│   CPU  ▁▂▃▄▅▆▇█▇▆▆▅▅▄▄▃▃▂▂  67%    GPU  ▄▄▅▅▆▆▇█  82%    MEM  ▁▁▂▂▃▃▄▄  56%          │
+│                                                                                      │
+│ Resources                          Queue           Ending soon                       │
+│   CPU  [████████░░] 67%              R   ████ 12     12345 train       -02:15        │
+│   GPU  [█████████░] 82%              PD  █████  5    12346 inference   -08:42        │
+│   MEM  [██████░░░░] 56%              CD  ██     2    12350 preprocess  -22:18        │
+│   NODE alloc:12 idle:4 total:16      F   █      1                                    │
+│                                                                                      │
+│ Partitions                                                                           │
+│   gpu-a100   cpu ████████░ 80%   gpu ██████░░ 60%   mem ████░░░░ 40%   12/16 nodes   │
+│   gpu-h100   cpu ███████░░ 75%   gpu █████████ 90%  mem ███████░ 70%    8/8  nodes   │
+│   cpu        cpu ███░░░░░░ 34%   mem ███░░░░░░ 30%                      4/12 nodes   │
+│                                                                                      │
+│ JOBID   PART      NAME            USER    ST  ELAPSED   LIMIT     N  REASON          │
+│   12345 gpu-a100  train_resnet50  alice   R   02:15:00  04:00:00  2  nid001          │
+│   12346 gpu-h100  inference       bob     R   08:42:00  12:00:00  1  nid002          │
+│   12347 cpu       preprocess      alice   PD  --        02:00:00  1  Priority        │
+│   12348 gpu-a100  finetune        carol   PD  --        06:00:00  4  Resources       │
+│                                                                                      │
+│ 1 dash  2 jobs  ↑↓ select  Enter details  l logs  c cancel  ^K assist  ? help  q     │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Job details (Enter / d)
 
 ```text
-┌ slurmdash  frontier  42 jobs ─────────────────────────────────────────────────────┐
-│                                                                                    │
-│ Time   [████████████░░░░░░░░] 52%  02:15:00 / 04:00:00                            │
-│                                                                                    │
-│  Job 12345                                                                         │
-│                                                                                    │
-│    Name        train_resnet50                                                      │
-│    User        alice                                                               │
-│    Account     ml-lab                                                              │
-│    Partition   gpu-a100                                                            │
-│    State       RUNNING                                                             │
-│    Command     /home/alice/run.sh                                                  │
-│    WorkDir     /home/alice/exps/resnet50-run-12                                    │
-│    StdOut      /home/alice/exps/resnet50-run-12/slurm-12345.out                    │
-│    StdErr      /home/alice/exps/resnet50-run-12/slurm-12345.err                    │
-│    NodeList    nid001                                                              │
-│                                                                                    │
-│  History                                                                           │
-│    train_resnet50: 12 runs, median elapsed 2h14m, max 3h47m                        │
-│    suggest --time at least 3h59m (median 2h14m / max 3h47m)                        │
-│                                                                                    │
-│ Esc back   q quit                                                                  │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ slurmdash · frontier · 42 jobs                                                   │
+│                                                                                  │
+│ Time   [████████████░░░░░░░░] 52%  02:15:00 / 04:00:00                           │
+│                                                                                  │
+│ Job 12345                                                                        │
+│                                                                                  │
+│   Name        train_resnet50                                                     │
+│   User        alice                                                              │
+│   Account     ml-lab                                                             │
+│   Partition   gpu-a100                                                           │
+│   State       RUNNING                                                            │
+│   Command     /home/alice/run.sh                                                 │
+│   WorkDir     /home/alice/exps/resnet50-run-12                                   │
+│   StdOut      /home/alice/exps/resnet50-run-12/slurm-12345.out                   │
+│   StdErr      /home/alice/exps/resnet50-run-12/slurm-12345.err                   │
+│   NodeList    nid001                                                             │
+│                                                                                  │
+│ History                                                                          │
+│   train_resnet50: 12 runs, median elapsed 2h14m, max 3h47m                       │
+│   suggest --time at least 3h59m (median 2h14m / max 3h47m)                       │
+│                                                                                  │
+│ Esc back   q quit                                                                │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 A pending job replaces the progress bar with a `Reason` line — for
@@ -92,18 +94,19 @@ scheduling priority.`
 ### Log viewer (l for stdout, e for stderr)
 
 ```text
-┌ log  stdout  /home/alice/exps/resnet50-run-12/slurm-12345.out  FOLLOW  3812 lines ─┐
-│                                                                                    │
-│   Epoch  9/40   loss 1.243   acc 0.612   lr 0.0010   eta 1:47:00                  │
-│   Epoch 10/40   loss 1.187   acc 0.628   lr 0.0010   eta 1:36:21                  │
-│   Epoch 11/40   loss 1.132   acc 0.641   lr 0.0009   eta 1:25:55                  │
-│   [val] step 50  loss 1.094  acc 0.659                                            │
-│   Epoch 12/40   loss 1.078   acc 0.658   lr 0.0009   eta 1:15:32                  │
-│ ▌ Epoch 13/40   loss 1.025   acc 0.674   lr 0.0008   eta 1:05:14                  │
-│   …                                                                                │
-│                                                                                    │
-│ ↑↓ jk scroll  PgUp/PgDn page  g top  G bottom  f follow  / search  n next  Esc    │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ stdout · /home/alice/exps/resnet50-run-12/slurm-12345.out · FOLLOW · 3812 lines  │
+│                                                                                  │
+│   Epoch  9/40   loss 1.243   acc 0.612   lr 0.0010   eta 1:47:00                 │
+│   Epoch 10/40   loss 1.187   acc 0.628   lr 0.0010   eta 1:36:21                 │
+│   Epoch 11/40   loss 1.132   acc 0.641   lr 0.0009   eta 1:25:55                 │
+│   [val] step 50  loss 1.094  acc 0.659                                           │
+│   Epoch 12/40   loss 1.078   acc 0.658   lr 0.0009   eta 1:15:32                 │
+│ ▌ Epoch 13/40   loss 1.025   acc 0.674   lr 0.0008   eta 1:05:14                 │
+│   …                                                                              │
+│                                                                                  │
+│ ↑↓ jk scroll   PgUp/PgDn page   g top   G bottom   f follow   / search   n next  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 `/` opens a search buffer; matched substrings are highlighted in the
@@ -112,13 +115,13 @@ accent color. Press `f` to pause autoscroll.
 ### Confirm modal (c cancel, h hold, u release, Q requeue)
 
 ```text
-                         ┌ Confirm ───────────────────────────┐
-                         │ cancel job 12345                   │
-                         │                                    │
-                         │ $ scancel 12345                    │
-                         │                                    │
-                         │ Enter / y to confirm    Esc / n    │
-                         └────────────────────────────────────┘
+                   ┌──────────────────────────────────────────┐
+                   │ cancel job 12345                         │
+                   │                                          │
+                   │ $ scancel 12345                          │
+                   │                                          │
+                   │ Enter / y to confirm    Esc / n          │
+                   └──────────────────────────────────────────┘
 ```
 
 Every destructive remote command goes through this prompt, regardless of
@@ -128,23 +131,24 @@ Each call is recorded in `command_audit_log`.
 ### Assist (Ctrl+K) — defaults to local Ollama
 
 ```text
-┌ Assist (Ctrl+K) ───────────────────────────────────────────────────────────────────┐
-│ ┌ prompt ────────────────────────────────────────────────────────────────────────┐ │
-│ │ my job 12347 is pending — what's the fastest fix?_                             │ │
-│ └────────────────────────────────────────────────────────────────────────────────┘ │
-│ ┌────────────────────────────────────────────────────────────────────────────────┐ │
-│ │  [ollama · llama3.2]                                                           │ │
-│ │                                                                                │ │
-│ │  Reason=Priority means other jobs in this partition outrank yours. You can:    │ │
-│ │   - wait it out (your fairshare will recover)                                  │ │
-│ │   - try the cpu partition if your job doesn't actually need a GPU              │ │
-│ │   - hold and resubmit with a tighter --time so the scheduler can backfill      │ │
-│ │                                                                                │ │
-│ │   proposed commands (press 1-9 to confirm)                                     │ │
-│ │   1. scontrol hold 12347                                                       │ │
-│ └────────────────────────────────────────────────────────────────────────────────┘ │
-│ Enter send   1-9 confirm command   Esc close                                       │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ Assist (Ctrl+K)                                                                  │
+│                                                                                  │
+│ prompt: my job 12347 is pending — what's the fastest fix?_                       │
+│                                                                                  │
+│ [ollama · llama3.2]                                                              │
+│                                                                                  │
+│ Reason=Priority means other jobs in this partition outrank yours.                │
+│ You can:                                                                         │
+│   · wait it out (fairshare will recover)                                         │
+│   · try the cpu partition if your job doesn't actually need a GPU                │
+│   · hold and resubmit with a tighter --time so the scheduler can backfill        │
+│                                                                                  │
+│ proposed commands (press 1-9 to confirm)                                         │
+│   1. scontrol hold 12347                                                         │
+│                                                                                  │
+│ Enter send   1-9 confirm command   Esc close                                     │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Pressing `1` opens the standard Confirm modal with `scontrol hold 12347`
@@ -154,28 +158,25 @@ gated on user confirmation and audit-logged.
 ### Local web UI (`slurmdash web`)
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ slurmdash  frontier   updated 14:23:01                              [readonly]│
-├──────────────────────────────────────────────────────────────────────────────┤
-│ ┌─ Resources ────────────┐ ┌─ Queue ──────────┐ ┌─ Ending soon ───────────┐  │
-│ │ CPU  ▰▰▰▰▰▰▱▱▱▱  67%   │ │ R   ▰▰▰▰▰▰▰▰ 12  │ │ 12345 train     -02:15 │  │
-│ │ GPU  ▰▰▰▰▰▰▰▰▰▱  82%   │ │ PD  ▰▰▰▰▰     5  │ │ 12346 inference -08:42 │  │
-│ │ MEM  ▰▰▰▰▰▰▱▱▱▱  56%   │ │ CD  ▰▰        2  │ │ …                       │  │
-│ └────────────────────────┘ └──────────────────┘ └─────────────────────────┘  │
-│                                                                              │
-│ ┌─ Partitions ──────────────────────────────────────────────────────────────┐│
-│ │ gpu-a100   cpu ▰▰▰▰▰▰▰▰▱▱ 80%  gpu ▰▰▰▰▰▰▱▱▱▱ 60%  mem ▰▰▰▰▱▱▱▱▱▱ 40% ││
-│ │ cpu        cpu ▰▰▰▱▱▱▱▱▱▱ 34%  mem ▰▰▰▱▱▱▱▱▱▱ 30%                       ││
-│ └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                              │
-│ ┌─ Jobs ────────────────────────────────────────────────────────────────────┐│
-│ │ Job    Part      Name           User    State  Elapsed  Limit    Actions ││
-│ │ 12345  gpu-a100  train_resnet50 alice   R      2:15:00  4:00:00  cancel ││
-│ │ 12346  gpu-h100  inference      bob     R      8:42:00  12:00:00 cancel ││
-│ │ 12347  cpu       preprocess     alice   PD                       hold   ││
-│ └────────────────────────────────────────────────────────────────────────────┘│
-│ auto-refresh every 5s · keys: r refresh now · Ctrl+K assist · Esc close      │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│ slurmdash · frontier · updated 14:23:01                     [readonly]             │
+│                                                                                    │
+│ Resources                       Queue           Ending soon                        │
+│   CPU  ▰▰▰▰▰▰▱▱▱▱  67%            R   ▰▰▰▰ 12    12345 train      -02:15           │
+│   GPU  ▰▰▰▰▰▰▰▰▰▱  82%            PD  ▰▰▰▰▰  5    12346 inference  -08:42          │
+│   MEM  ▰▰▰▰▰▰▱▱▱▱  56%            CD  ▰▰     2    …                                │
+│                                                                                    │
+│ Partitions                                                                         │
+│   gpu-a100   cpu ▰▰▰▰▰▰▰▰▱▱ 80%  gpu ▰▰▰▰▰▰▱▱▱▱ 60%  mem ▰▰▰▰▱▱▱▱▱▱ 40%            │
+│   cpu        cpu ▰▰▰▱▱▱▱▱▱▱ 34%  mem ▰▰▰▱▱▱▱▱▱▱ 30%                                │
+│                                                                                    │
+│ Jobs                                                                               │
+│   12345  gpu-a100  train_resnet50  alice  R   2:15:00   4:00:00   [cancel]         │
+│   12346  gpu-h100  inference       bob    R   8:42:00  12:00:00   [cancel]         │
+│   12347  cpu       preprocess      alice  PD                       [hold]          │
+│                                                                                    │
+│ auto-refresh every 5s · keys: r refresh now · Ctrl+K assist · Esc close modal      │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Same backend modules as the TUI. The browser polls `/api/dashboard`
