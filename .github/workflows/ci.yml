@@ -54,6 +54,9 @@ jobs:
             $BIN config "$sub" --help > /dev/null
           done
           # Generated completion scripts must be non-empty for each shell:
+          tmp=$(mktemp)
+          trap 'rm -f "$tmp"' EXIT
           for shell in bash zsh fish powershell elvish; do
-            test -s <($BIN completions "$shell")
+            $BIN completions "$shell" > "$tmp"
+            test -s "$tmp"
           done
