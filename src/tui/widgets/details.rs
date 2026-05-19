@@ -67,6 +67,25 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         theme.header_style(),
     )));
     lines.push(Line::raw(""));
+
+    // Pending-reason explainer: render before the key/value block so users
+    // see the action item immediately.
+    if let (Some(state_name), Some(reason)) = (&d.state, &d.reason) {
+        if state_name.eq_ignore_ascii_case("PENDING") {
+            let explained = crate::slurm::reason::explain(reason);
+            lines.push(Line::from(Span::styled(
+                format!("  Reason  {} — {}", explained.code, explained.summary),
+                theme.header_style(),
+            )));
+            if let Some(suggestion) = explained.suggestion {
+                lines.push(Line::from(Span::styled(
+                    format!("          {suggestion}"),
+                    theme.footer_style(),
+                )));
+            }
+            lines.push(Line::raw(""));
+        }
+    }
     kv!("Name", d.job_name.as_deref());
     kv!("User", d.user.as_deref());
     kv!("Account", d.account.as_deref());

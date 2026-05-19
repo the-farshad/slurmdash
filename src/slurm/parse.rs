@@ -1,8 +1,9 @@
 use anyhow::Result;
 use regex::Regex;
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use super::model::{Job, JobDetails};
+use super::model::{Aiot, Job, JobDetails, Partition};
 use super::state::JobState;
 
 /// Format string passed to `squeue --format=`. Order must match
@@ -133,6 +134,102 @@ fn slurm_duration_re() -> &'static Regex {
     })
 }
 
+/// Parse `sinfo --noheader --format="%P|%F|%C|%m|%G"` text output.
+///
+/// Slurm sometimes emits the same partition on multiple rows (one per node
+/// state); we sum into a single [`Partition`] entry keyed by name.
+pub fn parse_sinfo_text(s: &str) -> Vec<Partition> {
+    let mut by_name: BTreeMap<String, Partition> = BTreeMap::new();
+    for line in s.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut it = line.split('|');
+        let raw_name = it.next().unwrap_or("");
+        let is_default = raw_name.ends_with('*');
+        let name = raw_name.trim_end_matches('*').trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let nodes = parse_aiot(it.next().unwrap_or(""));
+        let cpus = parse_aiot(it.next().unwrap_or(""));
+        let mem_token = it.next().unwrap_or("").trim();
+        let memory: Option<u64> = if mem_token.is_empty() || mem_token == "N/A" {
+            None
+        } else {
+            mem_token.parse().ok()
+        };
+        let gres = it.next().unwrap_or("").trim().to_string();
+        let (gpus_per_node, gpu_type) = parse_gres(&gres);
+
+        let entry = by_name.entry(name.clone()).or_insert_with(|| Partition {
+            name: name.clone(),
+            default: is_default,
+            ..Default::default()
+        });
+        // Sum across state-rows; keep the first non-None memory/gres values.
+        entry.default = entry.default || is_default;
+        entry.nodes.allocated += nodes.allocated;
+        entry.nodes.idle += nodes.idle;
+        entry.nodes.other += nodes.other;
+        entry.nodes.total += nodes.total;
+        entry.cpus.allocated += cpus.allocated;
+        entry.cpus.idle += cpus.idle;
+        entry.cpus.other += cpus.other;
+        entry.cpus.total += cpus.total;
+        if entry.memory_mb_per_node.is_none() {
+            entry.memory_mb_per_node = memory;
+        }
+        if entry.gpus_per_node.is_none() {
+            entry.gpus_per_node = gpus_per_node;
+        }
+        if entry.gpu_type.is_none() {
+            entry.gpu_type = gpu_type;
+        }
+    }
+    by_name.into_values().collect()
+}
+
+/// Parse a Slurm `Allocated/Idle/Other/Total` aggregate (e.g. "12/4/0/16").
+fn parse_aiot(s: &str) -> Aiot {
+    let mut it = s.trim().split('/');
+    Aiot {
+        allocated: it.next().and_then(|x| x.parse().ok()).unwrap_or(0),
+        idle: it.next().and_then(|x| x.parse().ok()).unwrap_or(0),
+        other: it.next().and_then(|x| x.parse().ok()).unwrap_or(0),
+        total: it.next().and_then(|x| x.parse().ok()).unwrap_or(0),
+    }
+}
+
+/// Parse a Slurm Gres string such as "gpu:a100:4" or "gpu:8" or "(null)".
+/// Returns (gpus_per_node, optional_type).
+fn parse_gres(s: &str) -> (Option<u32>, Option<String>) {
+    let s = s.trim();
+    if s.is_empty() || s == "(null)" {
+        return (None, None);
+    }
+    for token in s.split(',') {
+        let token = token.trim();
+        if !token.starts_with("gpu") {
+            continue;
+        }
+        let parts: Vec<&str> = token.split(':').collect();
+        match parts.len() {
+            // "gpu" — no count, no type
+            1 => return (None, None),
+            // "gpu:N"
+            2 => return (parts[1].parse().ok(), None),
+            // "gpu:type:N" — or "gpu:type:N(IDX:0)" — strip trailing (...)
+            _ => {
+                let count_token = parts[2].split('(').next().unwrap_or("");
+                return (count_token.parse().ok(), Some(parts[1].to_string()));
+            }
+        }
+    }
+    (None, None)
+}
+
 /// Parse a Slurm duration string into seconds. Recognized forms:
 /// `D-HH:MM:SS`, `HH:MM:SS`, `MM:SS`, `SS`, plus `"UNLIMITED"`/`"N/A"` → None.
 pub fn parse_duration(s: &str) -> Option<u64> {
@@ -177,6 +274,35 @@ mod tests {
         assert_eq!(parse_duration("1-00:00:00"), Some(86400));
         assert_eq!(parse_duration("UNLIMITED"), None);
         assert_eq!(parse_duration("30"), Some(30));
+    }
+
+    #[test]
+    fn parses_sinfo_single_row() {
+        let row = "gpu*|12/4/0/16|120/40/0/160|256000|gpu:a100:4";
+        let parts = parse_sinfo_text(row);
+        assert_eq!(parts.len(), 1);
+        let p = &parts[0];
+        assert_eq!(p.name, "gpu");
+        assert!(p.default);
+        assert_eq!(p.nodes.allocated, 12);
+        assert_eq!(p.nodes.total, 16);
+        assert_eq!(p.cpus.allocated, 120);
+        assert_eq!(p.memory_mb_per_node, Some(256000));
+        assert_eq!(p.gpus_per_node, Some(4));
+        assert_eq!(p.gpu_type.as_deref(), Some("a100"));
+    }
+
+    #[test]
+    fn parses_sinfo_merges_state_rows() {
+        let blob = "cpu|2/0/0/2|16/0/0/16|64000|(null)\ncpu|0/4/0/4|0/32/0/32|64000|(null)\n";
+        let parts = parse_sinfo_text(blob);
+        assert_eq!(parts.len(), 1);
+        let p = &parts[0];
+        assert_eq!(p.name, "cpu");
+        assert_eq!(p.nodes.allocated, 2);
+        assert_eq!(p.nodes.idle, 4);
+        assert_eq!(p.nodes.total, 6);
+        assert!(p.gpus_per_node.is_none());
     }
 
     #[test]

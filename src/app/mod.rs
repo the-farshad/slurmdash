@@ -3,13 +3,15 @@ use std::collections::VecDeque;
 use ratatui::layout::Rect;
 
 use crate::actions::ActionKind;
-use crate::slurm::model::{Job, JobDetails};
+use crate::slurm::model::{ClusterResources, Job, JobDetails, Partition};
 
 const LOG_BUFFER_LIMIT: usize = 5_000;
 
 #[derive(Debug, Default)]
 pub struct AppState {
     pub jobs: Vec<Job>,
+    pub partitions: Vec<Partition>,
+    pub resources: ClusterResources,
     pub selected: usize,
     pub view: View,
     pub details: Option<JobDetails>,
@@ -31,6 +33,7 @@ pub struct AppState {
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub enum View {
     #[default]
+    Dashboard,
     Jobs,
     Details,
     Logs,

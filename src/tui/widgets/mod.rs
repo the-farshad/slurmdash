@@ -1,9 +1,13 @@
 pub mod confirm;
 pub mod details;
+pub mod ending_soon;
 pub mod error_banner;
 pub mod footer;
 pub mod header;
 pub mod help;
 pub mod job_table;
 pub mod log_viewer;
+pub mod partitions;
 pub mod progress;
+pub mod queue;
+pub mod resources;

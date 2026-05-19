@@ -20,6 +20,7 @@ use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+
 use crate::actions::ActionKind;
 use crate::app::{
     AppState, Confirm, LogKind, LogView, View, apply_sort,
@@ -27,7 +28,8 @@ use crate::app::{
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::db::{Db, snapshots};
-use crate::slurm::{scontrol, squeue};
+use crate::slurm::model::ClusterResources;
+use crate::slurm::{scontrol, sinfo, squeue};
 use crate::ssh::{LineStream, Runner, RunnerHandle};
 use crate::tui::theme::Theme;
 
@@ -98,6 +100,7 @@ async fn run_loop(
     let mut log_stream: Option<LineStream> = None;
 
     fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+    fetch_sinfo(runner, &mut state, db, cluster_id).await;
 
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(refresh_secs));
@@ -105,7 +108,7 @@ async fn run_loop(
 
     loop {
         let table_rect = draw(terminal, &state, &theme, &cluster_label, last_refresh)?;
-        state.table_rect = Some(table_rect);
+        state.table_rect = table_rect;
 
         tokio::select! {
             biased;
@@ -124,6 +127,7 @@ async fn run_loop(
                     Intent::Quit => break,
                     Intent::Refresh => {
                         fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                        fetch_sinfo(runner, &mut state, db, cluster_id).await;
                     }
                     Intent::OpenDetails => {
                         if let Some(job) = state.selected_job() {
@@ -151,7 +155,7 @@ async fn run_loop(
                         }
                     }
                     Intent::CloseLog => {
-                        state.view = View::Jobs;
+                        state.view = View::Dashboard;
                         state.log = None;
                         log_stream = None;
                     }
@@ -181,6 +185,7 @@ async fn run_loop(
             _ = ticker.tick() => {
                 if state.view != View::Logs {
                     fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                    fetch_sinfo(runner, &mut state, db, cluster_id).await;
                 }
             }
         }
@@ -189,15 +194,16 @@ async fn run_loop(
 }
 
 /// Returns the area where the job table was rendered (used to translate
-/// mouse clicks into row indices on the next event).
+/// mouse clicks into row indices on the next event). `None` if the current
+/// view doesn't show the table.
 fn draw(
     terminal: &mut Tui,
     state: &AppState,
     theme: &Theme,
     cluster_label: &str,
     last_refresh: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<Rect> {
-    let mut table_rect = Rect::default();
+) -> Result<Option<Rect>> {
+    let mut table_rect: Option<Rect> = None;
     terminal.draw(|frame| {
         let outer = Layout::default()
             .direction(Direction::Vertical)
@@ -219,9 +225,12 @@ fn draw(
         );
 
         match state.view {
+            View::Dashboard => {
+                table_rect = render_dashboard(frame, outer[1], state, theme);
+            }
             View::Jobs => {
                 widgets::job_table::render(frame, outer[1], state, theme);
-                table_rect = outer[1];
+                table_rect = Some(outer[1]);
             }
             View::Details => {
                 widgets::details::render(frame, outer[1], state, theme);
@@ -260,8 +269,44 @@ fn draw(
     Ok(table_rect)
 }
 
-/// Awaits the next line from `rx` if one is wired up; otherwise pends
-/// forever so the surrounding `select!` falls through to other branches.
+/// Three-stack dashboard: top row (resources + queue + ending-soon),
+/// middle row (partition cards), bottom row (job table). Returns the rect
+/// of the job table so mouse clicks can still drive selection.
+fn render_dashboard(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    theme: &Theme,
+) -> Option<Rect> {
+    let part_rows = (state.partitions.len() as u16 + 2).clamp(3, 12);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Length(part_rows),
+            Constraint::Min(5),
+        ])
+        .split(area);
+
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+        ])
+        .split(chunks[0]);
+
+    widgets::resources::render(frame, top[0], &state.resources, theme);
+    widgets::queue::render(frame, top[1], &state.jobs, theme);
+    widgets::ending_soon::render(frame, top[2], &state.jobs, theme);
+
+    widgets::partitions::render(frame, chunks[1], &state.partitions, theme);
+    widgets::job_table::render(frame, chunks[2], state, theme);
+
+    Some(chunks[2])
+}
+
 async fn recv_log_line(stream: Option<&mut LineStream>) -> Option<String> {
     match stream {
         Some(s) => s.rx.recv().await,
@@ -296,7 +341,6 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         return Intent::Quit;
     }
 
-    // Modal: search-input mode (Logs view only)
     if let Some(buf) = state.search_input.as_mut() {
         match key.code {
             KeyCode::Esc => {
@@ -320,7 +364,6 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         return Intent::None;
     }
 
-    // Confirm modal
     if state.confirm.is_some() {
         match key.code {
             KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => return Intent::ConfirmAction,
@@ -341,10 +384,23 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         state.last_error = None;
     }
 
+    // View switches are global (skip in input modes).
+    match key.code {
+        KeyCode::Char('1') => {
+            state.view = View::Dashboard;
+            return Intent::None;
+        }
+        KeyCode::Char('2') => {
+            state.view = View::Jobs;
+            return Intent::None;
+        }
+        _ => {}
+    }
+
     match state.view {
         View::Details => handle_key_details(key, state),
         View::Logs => handle_key_logs(key, state),
-        View::Jobs => handle_key_jobs(key, state),
+        View::Dashboard | View::Jobs => handle_key_jobs(key, state),
     }
 }
 
@@ -399,7 +455,7 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
 fn handle_key_details(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
-            state.view = View::Jobs;
+            state.view = View::Dashboard;
             state.details = None;
         }
         KeyCode::Char('?') => state.show_help = true,
@@ -465,7 +521,7 @@ fn handle_key_logs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
 fn handle_mouse(m: MouseEvent, state: &mut AppState) {
     let MouseEvent { kind, column, row, .. } = m;
     let Some(table_rect) = state.table_rect else { return };
-    if state.view != View::Jobs {
+    if !matches!(state.view, View::Dashboard | View::Jobs) {
         return;
     }
 
@@ -480,8 +536,6 @@ fn handle_mouse(m: MouseEvent, state: &mut AppState) {
 
     match kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            // Header occupies the first row of the table area; the border at
-            // top/bottom is on the same area so the offset stays simple.
             let header_offset: u16 = 1;
             let rel = row.saturating_sub(table_rect.y + header_offset);
             let idx = rel as usize;
@@ -548,6 +602,27 @@ async fn fetch(
         }
         Err(e) => {
             state.last_error = Some(format!("{e}"));
+        }
+    }
+}
+
+async fn fetch_sinfo(
+    runner: &dyn Runner,
+    state: &mut AppState,
+    db: Option<&Db>,
+    cluster_id: Option<i64>,
+) {
+    match sinfo::list_partitions(runner).await {
+        Ok(parts) => {
+            state.resources = ClusterResources::from_partitions(&parts);
+            if let (Some(d), Some(cid)) = (db, cluster_id) {
+                let _ = snapshots::write_resources(&d.pool, cid, &parts).await;
+            }
+            state.partitions = parts;
+        }
+        Err(e) => {
+            // Non-fatal: keep the previous snapshot, surface in the banner.
+            tracing::warn!(error = %e, "sinfo refresh failed");
         }
     }
 }
