@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
-    KeyModifiers,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -19,15 +19,16 @@ use crossterm::terminal::{
 use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
-
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use crate::actions::ActionKind;
-use crate::app::{AppState, Confirm, View};
+use crate::app::{
+    AppState, Confirm, LogKind, LogView, View, apply_sort,
+};
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::db::{Db, snapshots};
 use crate::slurm::{scontrol, squeue};
-use crate::ssh::{Runner, RunnerHandle};
+use crate::ssh::{LineStream, Runner, RunnerHandle};
 use crate::tui::theme::Theme;
 
 type Tui = Terminal<CrosstermBackend<io::Stdout>>;
@@ -72,16 +73,11 @@ async fn run_loop(
     handle: &RunnerHandle,
     db: Option<&Db>,
 ) -> Result<()> {
-    let theme = Theme::from_name(
-        cli.theme
-            .as_deref()
-            .unwrap_or(&config.ui.theme),
-    );
+    let theme = Theme::from_name(cli.theme.as_deref().unwrap_or(&config.ui.theme));
     let refresh_secs = cli.refresh.unwrap_or(config.ui.refresh_seconds).max(1);
     let cluster_label = handle.cluster_name.clone();
     let runner: &dyn Runner = handle.runner.as_ref();
 
-    // Resolve cluster_id once for the session.
     let cluster_id = match db {
         Some(d) => snapshots::ensure_cluster(&d.pool, &handle.cluster_name, handle.is_local)
             .await
@@ -99,6 +95,7 @@ async fn run_loop(
 
     let mut state = AppState::default();
     let mut last_refresh = None;
+    let mut log_stream: Option<LineStream> = None;
 
     fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
 
@@ -107,49 +104,19 @@ async fn run_loop(
     ticker.tick().await;
 
     loop {
-        terminal.draw(|frame| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                ])
-                .split(frame.area());
-
-            widgets::header::render(
-                frame,
-                chunks[0],
-                &state,
-                &theme,
-                &cluster_label,
-                last_refresh,
-                false,
-            );
-
-            match state.view {
-                View::Jobs => {
-                    widgets::job_table::render(frame, chunks[1], &state, &theme);
-                }
-                View::Details => {
-                    widgets::details::render(frame, chunks[1], &state, &theme);
-                }
-            }
-
-            widgets::footer::render(frame, chunks[2], &theme, state.view);
-
-            if state.show_help {
-                widgets::help::render(frame, frame.area(), &theme);
-            }
-            if let Some(confirm) = &state.confirm {
-                widgets::confirm::render(frame, frame.area(), confirm, &theme);
-            }
-            if let Some(err) = &state.last_error {
-                widgets::error_banner::render(frame, frame.area(), err, &theme);
-            }
-        })?;
+        let table_rect = draw(terminal, &state, &theme, &cluster_label, last_refresh)?;
+        state.table_rect = Some(table_rect);
 
         tokio::select! {
+            biased;
+            log_event = recv_log_line(log_stream.as_mut()) => {
+                match log_event {
+                    Some(line) => if let Some(log) = state.log.as_mut() {
+                        log.push(line);
+                    },
+                    None => log_stream = None,
+                }
+            }
             Some(Ok(event)) = events.next() => {
                 let intent = handle_event(event, &mut state);
                 match intent {
@@ -169,6 +136,24 @@ async fn run_loop(
                                 Err(e) => state.last_error = Some(format!("{e}")),
                             }
                         }
+                    }
+                    Intent::OpenLog(kind) => {
+                        if let Some(job) = state.selected_job() {
+                            let job_id = job.job_id.clone();
+                            match open_log(runner, &job_id, kind).await {
+                                Ok((view, stream)) => {
+                                    state.log = Some(view);
+                                    state.view = View::Logs;
+                                    log_stream = Some(stream);
+                                }
+                                Err(e) => state.last_error = Some(format!("{e}")),
+                            }
+                        }
+                    }
+                    Intent::CloseLog => {
+                        state.view = View::Jobs;
+                        state.log = None;
+                        log_stream = None;
                     }
                     Intent::ConfirmAction => {
                         if let Some(c) = state.confirm.take() {
@@ -194,11 +179,94 @@ async fn run_loop(
                 if state.should_quit { break; }
             }
             _ = ticker.tick() => {
-                fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                if state.view != View::Logs {
+                    fetch(runner, &opts, &mut state, &mut last_refresh, db, cluster_id).await;
+                }
             }
         }
     }
     Ok(())
+}
+
+/// Returns the area where the job table was rendered (used to translate
+/// mouse clicks into row indices on the next event).
+fn draw(
+    terminal: &mut Tui,
+    state: &AppState,
+    theme: &Theme,
+    cluster_label: &str,
+    last_refresh: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Rect> {
+    let mut table_rect = Rect::default();
+    terminal.draw(|frame| {
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(frame.area());
+
+        widgets::header::render(
+            frame,
+            outer[0],
+            state,
+            theme,
+            cluster_label,
+            last_refresh,
+            false,
+        );
+
+        match state.view {
+            View::Jobs => {
+                widgets::job_table::render(frame, outer[1], state, theme);
+                table_rect = outer[1];
+            }
+            View::Details => {
+                widgets::details::render(frame, outer[1], state, theme);
+            }
+            View::Logs => {
+                if let Some(log) = state.log.as_ref() {
+                    let log_layout = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Length(1), Constraint::Min(1)])
+                        .split(outer[1]);
+                    widgets::log_viewer::render_header(
+                        frame,
+                        log_layout[0],
+                        log,
+                        theme,
+                        state.search_input.as_deref(),
+                        state.sort,
+                    );
+                    widgets::log_viewer::render_body(frame, log_layout[1], log, theme);
+                }
+            }
+        }
+
+        widgets::footer::render(frame, outer[2], theme, state.view);
+
+        if state.show_help {
+            widgets::help::render(frame, frame.area(), theme);
+        }
+        if let Some(confirm) = &state.confirm {
+            widgets::confirm::render(frame, frame.area(), confirm, theme);
+        }
+        if let Some(err) = &state.last_error {
+            widgets::error_banner::render(frame, frame.area(), err, theme);
+        }
+    })?;
+    Ok(table_rect)
+}
+
+/// Awaits the next line from `rx` if one is wired up; otherwise pends
+/// forever so the surrounding `select!` falls through to other branches.
+async fn recv_log_line(stream: Option<&mut LineStream>) -> Option<String> {
+    match stream {
+        Some(s) => s.rx.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 enum Intent {
@@ -206,22 +274,53 @@ enum Intent {
     Quit,
     Refresh,
     OpenDetails,
+    OpenLog(LogKind),
+    CloseLog,
     ConfirmAction,
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
-    let Event::Key(key) = event else { return Intent::None };
-    if key.kind != KeyEventKind::Press {
-        return Intent::None;
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(key, state),
+        Event::Mouse(m) => {
+            handle_mouse(m, state);
+            Intent::None
+        }
+        _ => Intent::None,
     }
+}
 
-    // Ctrl-C always exits.
+fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         state.should_quit = true;
         return Intent::Quit;
     }
 
-    // Modal: confirm dialog absorbs keys.
+    // Modal: search-input mode (Logs view only)
+    if let Some(buf) = state.search_input.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                state.search_input = None;
+            }
+            KeyCode::Enter => {
+                let q = state.search_input.take().unwrap_or_default();
+                if let Some(log) = state.log.as_mut() {
+                    log.search = if q.is_empty() { None } else { Some(q) };
+                    log.find_next(log.scroll);
+                }
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Char(c) => {
+                buf.push(c);
+            }
+            _ => {}
+        }
+        return Intent::None;
+    }
+
+    // Confirm modal
     if state.confirm.is_some() {
         match key.code {
             KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => return Intent::ConfirmAction,
@@ -233,29 +332,23 @@ fn handle_event(event: Event, state: &mut AppState) -> Intent {
         return Intent::None;
     }
 
-    // Modal: help overlay closes on any key.
     if state.show_help {
         state.show_help = false;
         return Intent::None;
     }
 
-    // Modal: error banner dismisses on any key.
     if state.last_error.is_some() {
         state.last_error = None;
-        // fall through so the same key can also act on the underlying view
     }
 
-    if state.view == View::Details {
-        if matches!(
-            key.code,
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace
-        ) {
-            state.view = View::Jobs;
-            state.details = None;
-            return Intent::None;
-        }
+    match state.view {
+        View::Details => handle_key_details(key, state),
+        View::Logs => handle_key_logs(key, state),
+        View::Jobs => handle_key_jobs(key, state),
     }
+}
 
+fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
     match key.code {
         KeyCode::Char('q') => {
             state.should_quit = true;
@@ -279,6 +372,18 @@ fn handle_event(event: Event, state: &mut AppState) -> Intent {
         }
         KeyCode::Char('R') | KeyCode::Char('r') => Intent::Refresh,
         KeyCode::Enter | KeyCode::Char('d') => Intent::OpenDetails,
+        KeyCode::Char('l') => Intent::OpenLog(LogKind::Stdout),
+        KeyCode::Char('e') => Intent::OpenLog(LogKind::Stderr),
+        KeyCode::Char('s') => {
+            state.sort.key = state.sort.key.next();
+            apply_sort(&mut state.jobs, state.sort);
+            Intent::None
+        }
+        KeyCode::Char('S') => {
+            state.sort.reverse = !state.sort.reverse;
+            apply_sort(&mut state.jobs, state.sort);
+            Intent::None
+        }
         KeyCode::Char('?') => {
             state.show_help = true;
             Intent::None
@@ -286,9 +391,107 @@ fn handle_event(event: Event, state: &mut AppState) -> Intent {
         KeyCode::Char('c') => open_confirm(state, ActionKind::Cancel),
         KeyCode::Char('h') => open_confirm(state, ActionKind::Hold),
         KeyCode::Char('u') => open_confirm(state, ActionKind::Release),
-        // 'r' is overloaded for refresh; use 'Q' for requeue to avoid clobbering.
         KeyCode::Char('Q') => open_confirm(state, ActionKind::Requeue),
         _ => Intent::None,
+    }
+}
+
+fn handle_key_details(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+            state.view = View::Jobs;
+            state.details = None;
+        }
+        KeyCode::Char('?') => state.show_help = true,
+        _ => {}
+    }
+    Intent::None
+}
+
+fn handle_key_logs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => return Intent::CloseLog,
+        KeyCode::Char('?') => state.show_help = true,
+        KeyCode::Char('f') => {
+            if let Some(log) = state.log.as_mut() {
+                log.follow = !log.follow;
+            }
+        }
+        KeyCode::Char('g') | KeyCode::Home => {
+            if let Some(log) = state.log.as_mut() {
+                log.follow = false;
+                log.scroll = 0;
+            }
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            if let Some(log) = state.log.as_mut() {
+                log.follow = true;
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if let Some(log) = state.log.as_mut() {
+                log.scroll_by(1);
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if let Some(log) = state.log.as_mut() {
+                log.scroll_by(-1);
+            }
+        }
+        KeyCode::PageDown => {
+            if let Some(log) = state.log.as_mut() {
+                log.scroll_by(20);
+            }
+        }
+        KeyCode::PageUp => {
+            if let Some(log) = state.log.as_mut() {
+                log.scroll_by(-20);
+            }
+        }
+        KeyCode::Char('/') => {
+            state.search_input = Some(String::new());
+        }
+        KeyCode::Char('n') => {
+            if let Some(log) = state.log.as_mut() {
+                let from = log.scroll.saturating_add(1);
+                log.find_next(from);
+            }
+        }
+        _ => {}
+    }
+    Intent::None
+}
+
+fn handle_mouse(m: MouseEvent, state: &mut AppState) {
+    let MouseEvent { kind, column, row, .. } = m;
+    let Some(table_rect) = state.table_rect else { return };
+    if state.view != View::Jobs {
+        return;
+    }
+
+    let inside = column >= table_rect.x
+        && column < table_rect.x + table_rect.width
+        && row >= table_rect.y
+        && row < table_rect.y + table_rect.height;
+
+    if !inside {
+        return;
+    }
+
+    match kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Header occupies the first row of the table area; the border at
+            // top/bottom is on the same area so the offset stays simple.
+            let header_offset: u16 = 1;
+            let rel = row.saturating_sub(table_rect.y + header_offset);
+            let idx = rel as usize;
+            if idx < state.jobs.len() {
+                state.selected = idx;
+            }
+        }
+        MouseEventKind::ScrollDown => state.select_next(),
+        MouseEventKind::ScrollUp => state.select_prev(),
+        _ => {}
     }
 }
 
@@ -303,6 +506,25 @@ fn open_confirm(state: &mut AppState, kind: ActionKind) -> Intent {
     Intent::None
 }
 
+async fn open_log(
+    runner: &dyn Runner,
+    job_id: &str,
+    kind: LogKind,
+) -> Result<(LogView, LineStream)> {
+    let details = scontrol::show(runner, job_id).await?;
+    let path = match kind {
+        LogKind::Stdout => details.stdout.clone(),
+        LogKind::Stderr => details.stderr.clone(),
+    }
+    .filter(|p| !p.is_empty())
+    .ok_or_else(|| anyhow::anyhow!("no {} path in scontrol output", kind.label()))?;
+
+    let stream = runner
+        .stream("tail", &["-F", "-n", "200", path.as_str()])
+        .await?;
+    Ok((LogView::new(job_id.to_string(), kind, path), stream))
+}
+
 async fn fetch(
     runner: &dyn Runner,
     opts: &squeue::Options,
@@ -312,7 +534,8 @@ async fn fetch(
     cluster_id: Option<i64>,
 ) {
     match squeue::list(runner, opts).await {
-        Ok(jobs) => {
+        Ok(mut jobs) => {
+            apply_sort(&mut jobs, state.sort);
             if state.selected >= jobs.len() && !jobs.is_empty() {
                 state.selected = jobs.len() - 1;
             }

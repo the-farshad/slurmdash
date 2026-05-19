@@ -12,11 +12,12 @@ pub mod tail;
 
 use anyhow::{Context, Result};
 use futures::future::BoxFuture;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::cli::Cli;
 use crate::config::{ClusterProfile, Config};
 
-/// Outcome of a single command invocation.
 #[derive(Debug, Clone)]
 pub struct CommandOutput {
     pub stdout: String,
@@ -41,9 +42,15 @@ impl CommandOutput {
     }
 }
 
-/// Something that can execute a remote (or local) shell command.
-///
-/// Returns a boxed future so the trait is object-safe.
+/// A live stream of stdout lines from a long-running remote command (used
+/// for `tail -F`). The `join` handle is kept so the streaming task is
+/// awaited on drop.
+pub struct LineStream {
+    pub rx: mpsc::Receiver<String>,
+    #[allow(dead_code)]
+    pub join: JoinHandle<()>,
+}
+
 pub trait Runner: Send + Sync {
     fn run<'a>(
         &'a self,
@@ -51,19 +58,21 @@ pub trait Runner: Send + Sync {
         args: &'a [&'a str],
     ) -> BoxFuture<'a, Result<CommandOutput>>;
 
-    /// Short description used in audit logs and the UI status bar.
+    fn stream<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<LineStream>>;
+
     fn description(&self) -> String;
 }
 
-/// A connected runner plus enough metadata for the DB layer to key snapshots
-/// and audit-log entries by cluster.
 pub struct RunnerHandle {
     pub runner: Box<dyn Runner>,
     pub cluster_name: String,
     pub is_local: bool,
 }
 
-/// Construct a runner for the cluster selected by CLI flags + config.
 pub async fn build_runner(cli: &Cli, config: &Config) -> Result<RunnerHandle> {
     let (profile, name) = if cli.host.is_some() || cli.user.is_some() {
         let p = ClusterProfile {

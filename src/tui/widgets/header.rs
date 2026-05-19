@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::AppState;
+use crate::app::{AppState, SortState};
 use crate::tui::theme::Theme;
 
 pub fn render(
@@ -24,6 +24,7 @@ pub fn render(
     } else {
         "—".to_string()
     };
+    let sort = format_sort(state.sort);
 
     let line = Line::from(vec![
         Span::styled("slurmdash", theme.header_style()),
@@ -33,7 +34,14 @@ pub fn render(
         Span::styled(count, Style::default().fg(theme.muted)),
         Span::raw("  "),
         Span::styled(status, Style::default().fg(theme.muted)),
+        Span::raw("  "),
+        Span::styled(sort, Style::default().fg(theme.muted)),
     ]);
 
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn format_sort(s: SortState) -> String {
+    let arrow = if s.reverse { "↓" } else { "↑" };
+    format!("sort:{}{}", s.key.label(), arrow)
 }
