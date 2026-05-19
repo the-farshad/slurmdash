@@ -23,7 +23,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // section title: LLM
-            Constraint::Length(5), // LLM rows
+            Constraint::Length(6), // 4 editable LLM rows + nav hint
             Constraint::Length(1), // section title: Theme
             Constraint::Length(2), // theme + cycle hint
             Constraint::Length(1), // section title: Web UI
@@ -48,38 +48,59 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         ])
     };
 
-    let provider = std::env::var("SLURMDASH_LLM_PROVIDER").unwrap_or_else(|_| "ollama".into());
-    let ollama_host =
-        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".into());
-    let ollama_model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".into());
-    let anthropic_model =
-        std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".into());
     let anthropic_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok();
 
     frame.render_widget(Paragraph::new(header(" LLM assistant")), chunks[0]);
+
+    // Render the 4 editable LLM rows. The currently-selected row gets a
+    // `▎` indicator; if `edit_buffer` is Some, the selected row shows
+    // the live input buffer with a trailing cursor block.
+    let llm = &state.settings.llm;
+    let cursor = state.settings.cursor;
+    let editing = state.settings.edit_buffer.is_some();
     let mut llm_lines: Vec<Line> = Vec::new();
-    llm_lines.push(kv("provider", provider.clone(), theme.accent));
-    if provider == "ollama" {
-        llm_lines.push(kv("host", ollama_host, theme.fg));
-        llm_lines.push(kv("model", ollama_model, theme.fg));
-    } else {
-        llm_lines.push(kv("model", anthropic_model, theme.fg));
-        llm_lines.push(kv(
-            "api_key",
-            if anthropic_key_set {
-                "set (hidden)".into()
-            } else {
-                "NOT SET — export ANTHROPIC_API_KEY".into()
-            },
-            if anthropic_key_set {
-                theme.usage_low
-            } else {
-                theme.action_danger
-            },
-        ));
+    for i in 0..crate::app::LlmConfig::FIELDS {
+        let is_selected = i == cursor;
+        let prefix = if is_selected { "▎ " } else { "  " };
+        let label = crate::app::LlmConfig::field_label(i);
+        let value: String = if is_selected && editing {
+            format!("{}_", state.settings.edit_buffer.as_deref().unwrap_or(""))
+        } else {
+            llm.field_value(i).to_string()
+        };
+        let value_color = if is_selected && editing {
+            theme.action_warning
+        } else if is_selected {
+            theme.accent
+        } else {
+            theme.fg
+        };
+        let prefix_color = if is_selected { theme.accent } else { theme.bg };
+        llm_lines.push(Line::from(vec![
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(prefix_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("{label:<16}"), Style::default().fg(theme.muted)),
+            Span::styled(value, Style::default().fg(value_color)),
+        ]));
     }
+    let hint_text = if editing {
+        "    Enter commit · Esc cancel · Backspace delete"
+    } else {
+        "    ↑↓ select · e or Enter edit · t test · API_KEY stays in env only"
+    };
     llm_lines.push(Line::from(Span::styled(
-        "    (override via SLURMDASH_LLM_PROVIDER / OLLAMA_HOST / OLLAMA_MODEL env vars)",
+        format!(
+            "{hint_text}{}",
+            if anthropic_key_set {
+                " · ANTHROPIC_API_KEY set"
+            } else {
+                ""
+            }
+        ),
         Style::default().fg(theme.muted),
     )));
     frame.render_widget(Paragraph::new(llm_lines), chunks[1]);

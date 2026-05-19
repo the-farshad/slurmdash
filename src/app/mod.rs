@@ -227,6 +227,59 @@ pub struct SettingsState {
     pub test_in_flight: bool,
     pub test_result: Option<String>,
     pub test_error: Option<String>,
+
+    /// Live LLM config, editable from the Settings view. Seeded from
+    /// env vars and the DB-backed `AssistSettings` at startup, written
+    /// back through `db::settings::put_assist` on commit.
+    pub llm: LlmConfig,
+    /// Which field the selection cursor is on (0..NUM_LLM_FIELDS).
+    pub cursor: usize,
+    /// Buffer when an LLM field is being edited inline. `None` means
+    /// navigation mode; `Some` means typing.
+    pub edit_buffer: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct LlmConfig {
+    pub provider: String,
+    pub ollama_host: String,
+    pub ollama_model: String,
+    pub anthropic_model: String,
+}
+
+impl LlmConfig {
+    /// Field count for cursor navigation. Keep in sync with [`Self::field_at`].
+    pub const FIELDS: usize = 4;
+
+    pub fn field_label(idx: usize) -> &'static str {
+        match idx {
+            0 => "provider",
+            1 => "ollama_host",
+            2 => "ollama_model",
+            3 => "anthropic_model",
+            _ => "",
+        }
+    }
+
+    pub fn field_value(&self, idx: usize) -> &str {
+        match idx {
+            0 => &self.provider,
+            1 => &self.ollama_host,
+            2 => &self.ollama_model,
+            3 => &self.anthropic_model,
+            _ => "",
+        }
+    }
+
+    pub fn set_field(&mut self, idx: usize, value: String) {
+        match idx {
+            0 => self.provider = value,
+            1 => self.ollama_host = value,
+            2 => self.ollama_model = value,
+            3 => self.anthropic_model = value,
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

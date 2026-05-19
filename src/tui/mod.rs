@@ -98,6 +98,38 @@ async fn run_loop(
         .or(saved_theme)
         .unwrap_or_else(|| config.ui.theme.clone());
 
+    // Resolve LLM config. Hierarchy: existing env vars > DB-stored
+    // assist settings > built-in defaults. Whatever wins is written
+    // back to env vars so the assist providers (which read env at call
+    // time) see the same values shown in the Settings view.
+    let stored_llm = match db {
+        Some(d) => crate::db::settings::get_assist(&d.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+        None => crate::db::settings::AssistSettings::default(),
+    };
+    let llm = crate::app::LlmConfig {
+        provider: std::env::var("SLURMDASH_LLM_PROVIDER")
+            .ok()
+            .or(stored_llm.provider)
+            .unwrap_or_else(|| "ollama".into()),
+        ollama_host: std::env::var("OLLAMA_HOST")
+            .ok()
+            .or(stored_llm.ollama_host)
+            .unwrap_or_else(|| "http://localhost:11434".into()),
+        ollama_model: std::env::var("OLLAMA_MODEL")
+            .ok()
+            .or(stored_llm.ollama_model)
+            .unwrap_or_else(|| "llama3.2".into()),
+        anthropic_model: std::env::var("ANTHROPIC_MODEL")
+            .ok()
+            .or(stored_llm.anthropic_model)
+            .unwrap_or_else(|| "claude-sonnet-4-6".into()),
+    };
+    apply_llm_to_env(&llm);
+
     let mut state = AppState {
         filter: if cli.all {
             FilterMode::All
@@ -107,6 +139,7 @@ async fn run_loop(
         theme_name: initial_theme,
         ..AppState::default()
     };
+    state.settings.llm = llm;
     let mut last_refresh = None;
     let mut log_stream: Option<LineStream> = None;
 
@@ -251,6 +284,9 @@ async fn run_loop(
                     }
                     Intent::WebStart => {
                         run_web_start(&mut state, cli, config, handle, db).await;
+                    }
+                    Intent::SettingsSaveLlm => {
+                        save_llm_config(&state.settings.llm, db).await;
                     }
                 }
                 if state.should_quit { break; }
@@ -454,6 +490,8 @@ enum Intent {
     SettingsTest,
     /// User pressed `w` — start the embedded web UI in the background.
     WebStart,
+    /// User committed an edit to the LLM config — persist + apply.
+    SettingsSaveLlm,
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
@@ -618,8 +656,37 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
 }
 
 fn handle_key_settings(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
+    // Edit mode absorbs nearly every key — only Enter (commit) and Esc
+    // (cancel) leave it. This way typing `q`, `t`, `T` into a field
+    // doesn't quit the TUI or trigger an unrelated action.
+    if let Some(buf) = state.settings.edit_buffer.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                state.settings.edit_buffer = None;
+                return Intent::None;
+            }
+            KeyCode::Enter => {
+                let value = state.settings.edit_buffer.take().unwrap_or_default();
+                state
+                    .settings
+                    .llm
+                    .set_field(state.settings.cursor, value.trim().to_string());
+                return Intent::SettingsSaveLlm;
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+                return Intent::None;
+            }
+            KeyCode::Char(c) => {
+                buf.push(c);
+                return Intent::None;
+            }
+            _ => return Intent::None,
+        }
+    }
+
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+        KeyCode::Esc | KeyCode::Char('q') => {
             state.view = View::Dashboard;
             Intent::None
         }
@@ -636,6 +703,28 @@ fn handle_key_settings(key: crossterm::event::KeyEvent, state: &mut AppState) ->
             } else {
                 Intent::None
             }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if state.settings.cursor == 0 {
+                state.settings.cursor = crate::app::LlmConfig::FIELDS - 1;
+            } else {
+                state.settings.cursor -= 1;
+            }
+            Intent::None
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            state.settings.cursor = (state.settings.cursor + 1) % crate::app::LlmConfig::FIELDS;
+            Intent::None
+        }
+        KeyCode::Enter | KeyCode::Char('e') => {
+            // Start editing the selected field with its current value.
+            let current = state
+                .settings
+                .llm
+                .field_value(state.settings.cursor)
+                .to_string();
+            state.settings.edit_buffer = Some(current);
+            Intent::None
         }
         KeyCode::Char('?') => {
             state.show_help = true;
@@ -1042,6 +1131,41 @@ async fn run_web_start(
         Err(e) => {
             state.web.last_error = Some(format!("{e}"));
         }
+    }
+}
+
+/// Mirror the LLM config values into process env so the assist
+/// providers — which read env vars at call time — pick up changes
+/// made through the Settings view. `set_var` is `unsafe` in Rust
+/// 2024; calling it before any other thread touches env is fine
+/// because nothing in slurmdash spawns workers that read these vars
+/// concurrently.
+fn apply_llm_to_env(llm: &crate::app::LlmConfig) {
+    // Safety: single-threaded with respect to env reads of these keys.
+    // Callers are TUI startup + the SettingsSaveLlm dispatcher; no
+    // background task reads SLURMDASH_LLM_PROVIDER / OLLAMA_* /
+    // ANTHROPIC_MODEL at the moment we write them.
+    unsafe {
+        std::env::set_var("SLURMDASH_LLM_PROVIDER", &llm.provider);
+        std::env::set_var("OLLAMA_HOST", &llm.ollama_host);
+        std::env::set_var("OLLAMA_MODEL", &llm.ollama_model);
+        std::env::set_var("ANTHROPIC_MODEL", &llm.anthropic_model);
+    }
+}
+
+/// Persist edited LLM config to the DB settings KV and rewrite env
+/// vars so the next `t` test / Ctrl+K assist call sees the new
+/// values. Silently no-ops if no DB is configured (env-only mode).
+async fn save_llm_config(llm: &crate::app::LlmConfig, db: Option<&Db>) {
+    apply_llm_to_env(llm);
+    if let Some(d) = db {
+        let payload = crate::db::settings::AssistSettings {
+            provider: Some(llm.provider.clone()),
+            ollama_host: Some(llm.ollama_host.clone()),
+            ollama_model: Some(llm.ollama_model.clone()),
+            anthropic_model: Some(llm.anthropic_model.clone()),
+        };
+        let _ = crate::db::settings::put_assist(&d.pool, &payload).await;
     }
 }
 

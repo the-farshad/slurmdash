@@ -181,7 +181,17 @@ const JOBS_HINTS: [Hint; 19] = [
     },
 ];
 
-const SETTINGS_HINTS: [Hint; 5] = [
+const SETTINGS_HINTS: [Hint; 7] = [
+    Hint {
+        key: "↑↓",
+        label: "select",
+        kind: HintKind::Normal,
+    },
+    Hint {
+        key: "e·Enter",
+        label: "edit",
+        kind: HintKind::Special,
+    },
     Hint {
         key: "t",
         label: "test LLM",
