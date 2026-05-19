@@ -236,19 +236,19 @@ function renderTrends(history) {
 // ---- State donut ----------------------------------------------------
 
 const STATE_COLORS = {
-  R:  'var(--running)',
-  PD: 'var(--pending)',
-  CG: 'var(--completing)',
-  CD: 'var(--completed)',
-  F:  'var(--failed)',
-  TO: 'var(--failed)',
-  NF: 'var(--failed)',
-  BF: 'var(--failed)',
-  DL: 'var(--failed)',
-  OOM:'var(--failed)',
-  CA: 'var(--cancelled)',
-  H:  'var(--held)',
-  S:  'var(--suspended)',
+  R:  'var(--chart-running)',
+  PD: 'var(--chart-pending)',
+  CG: 'var(--chart-completing)',
+  CD: 'var(--chart-completed)',
+  F:  'var(--chart-failed)',
+  TO: 'var(--chart-failed)',
+  NF: 'var(--chart-failed)',
+  BF: 'var(--chart-failed)',
+  DL: 'var(--chart-failed)',
+  OOM:'var(--chart-failed)',
+  CA: 'var(--chart-cancelled)',
+  H:  'var(--chart-held)',
+  S:  'var(--chart-suspended)',
 };
 
 function renderStateDonut(jobs) {
@@ -660,8 +660,12 @@ document.addEventListener('keydown', (e) => {
     e.key === 'r' && !e.metaKey && !e.ctrlKey &&
     document.activeElement?.tagName !== 'INPUT'
   ) refresh();
+  // `Ctrl+/` focuses the filter input. `/` alone is reserved by
+  // Firefox for "Search for text when you start typing" and our
+  // preventDefault doesn't always beat the browser to it.
   if (
-    e.key === '/' && document.activeElement?.tagName !== 'INPUT'
+    e.key === '/' && (e.metaKey || e.ctrlKey) &&
+    document.activeElement?.tagName !== 'INPUT'
   ) {
     e.preventDefault();
     document.getElementById('filter-input').focus();
@@ -693,18 +697,59 @@ document.addEventListener('click', (e) => {
   }
 });
 document.getElementById('assist-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); sendAssist(); }
+  if (e.key === 'Enter') { e.preventDefault(); sendAssist(); return; }
+  // 1-9 confirm a proposed command — only when the input is empty so
+  // we don't swallow digits the user actually wants to type.
+  if (/^[1-9]$/.test(e.key) && e.target.value.length === 0) {
+    const idx = parseInt(e.key, 10) - 1;
+    const cmd = lastCommands[idx];
+    if (cmd && cmd.action && cmd.job) {
+      e.preventDefault();
+      closeAssist();
+      openModal(cmd.action, cmd.job);
+    }
+  }
 });
 
 let selectedJobId = null;
-async function sendAssist() {
-  const input = document.getElementById('assist-input');
+let lastCommands = [];
+let thinkTicker = null;
+let inFlight = false;
+
+function setAssistThinking(on) {
   const status = document.getElementById('assist-status');
+  const sendBtn = document.getElementById('assist-send');
+  if (thinkTicker) { clearInterval(thinkTicker); thinkTicker = null; }
+  if (!on) {
+    status.innerHTML = '';
+    sendBtn.disabled = false;
+    return;
+  }
+  sendBtn.disabled = true;
+  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let i = 0;
+  const t0 = Date.now();
+  const tick = () => {
+    const elapsed = Math.floor((Date.now() - t0) / 1000);
+    status.innerHTML =
+      `<span class="spinner">${frames[i % frames.length]}</span>` +
+      ` thinking… <span class="muted">${elapsed}s</span>`;
+    i++;
+  };
+  tick();
+  thinkTicker = setInterval(tick, 100);
+}
+
+async function sendAssist() {
+  if (inFlight) return; // ignore double-Enter while waiting
+  const input = document.getElementById('assist-input');
   const out = document.getElementById('assist-response');
   const prompt = input.value.trim();
   if (!prompt) return;
-  status.textContent = 'thinking…';
-  out.textContent = '';
+  inFlight = true;
+  setAssistThinking(true);
+  out.innerHTML = '';
+  lastCommands = [];
   try {
     const body = JSON.stringify({ prompt, job_id: selectedJobId });
     const r = await fetchJson('/api/assist', {
@@ -712,22 +757,76 @@ async function sendAssist() {
       headers: { 'Content-Type': 'application/json' },
       body,
     });
-    status.textContent = '';
+    setAssistThinking(false);
     renderAssistResponse(r);
+    // Clear the input so the user can start typing a follow-up
+    // immediately — without this they have to delete the previous
+    // prompt every time, which is why Enter felt broken on the second
+    // round-trip.
+    input.value = '';
+    input.focus();
   } catch (err) {
-    status.textContent = '';
-    out.textContent = `error: ${err.message}`;
+    setAssistThinking(false);
+    out.innerHTML = `<div class="md" style="color:var(--failed)">error: ${escape(err.message)}</div>`;
+  } finally {
+    inFlight = false;
   }
+}
+
+// Minimal Markdown subset → HTML. We escape first, then transform the
+// escaped string — the inserted tags are the only raw HTML in the
+// output, so user-/model-supplied content stays safe from injection.
+function renderMarkdown(text) {
+  let s = escape(text ?? '');
+  // Fenced code blocks (triple backticks). Optional language hint
+  // after the opening fence is preserved as a class.
+  s = s.replace(/```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g, (_m, lang, code) => {
+    const cls = lang ? ` class="lang-${lang}"` : '';
+    return `<pre><code${cls}>${code.replace(/\n$/, '')}</code></pre>`;
+  });
+  // Inline code.
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  // Headings (most → least specific).
+  s = s.replace(/^### (.+)$/gm, '<h5>$1</h5>');
+  s = s.replace(/^## (.+)$/gm, '<h4>$1</h4>');
+  s = s.replace(/^# (.+)$/gm,  '<h3>$1</h3>');
+  // Bold + italic. Ordered: bold first.
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  // Lists (one-level, contiguous lines starting with "- " or "* ").
+  s = s.replace(/(^|\n)((?:- |\* )[^\n]+(?:\n(?:- |\* )[^\n]+)*)/g, (_m, lead, block) => {
+    const items = block.split(/\n/).map(l => `<li>${l.replace(/^(?:- |\* )/, '')}</li>`).join('');
+    return `${lead}<ul>${items}</ul>`;
+  });
+  // Numbered lists.
+  s = s.replace(/(^|\n)((?:\d+\. )[^\n]+(?:\n\d+\. [^\n]+)*)/g, (_m, lead, block) => {
+    const items = block.split(/\n/).map(l => `<li>${l.replace(/^\d+\.\s+/, '')}</li>`).join('');
+    return `${lead}<ol>${items}</ol>`;
+  });
+  // Links: [text](url) — restrict the URL to safe schemes.
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+|mailto:[^)\s]+)\)/g,
+                '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  // Horizontal rule.
+  s = s.replace(/^---+$/gm, '<hr>');
+  // Paragraph breaks — blank line → end of paragraph; single \n inside
+  // a paragraph becomes <br>.
+  const blocks = s.split(/\n{2,}/).map(b => {
+    if (/^<(h[3-5]|ul|ol|pre|hr|blockquote)/i.test(b.trim())) return b;
+    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+  });
+  return blocks.join('');
 }
 
 function renderAssistResponse(r) {
   const out = document.getElementById('assist-response');
   const head = `<div class="meta">[${escape(r.provider)} · ${escape(r.model)}]</div>`;
-  const body = `<div>${escape(r.text)}</div>`;
+  const body = `<div class="md">${renderMarkdown(r.text)}</div>`;
   let cmds = '';
+  lastCommands = [];
   if (r.commands && r.commands.length) {
-    cmds = '<hr style="border-color:var(--border);margin:8px 0">';
-    for (const c of r.commands) {
+    cmds = '<hr>';
+    r.commands.slice(0, 9).forEach((c, idx) => {
+      const num = idx + 1;
       const kind = c.kind?.type ?? '';
       const job = c.kind?.job_id ?? '';
       let action = '';
@@ -735,11 +834,12 @@ function renderAssistResponse(r) {
       else if (kind === 'Hold') action = 'hold';
       else if (kind === 'Release') action = 'release';
       else if (kind === 'Requeue') action = 'requeue';
+      lastCommands.push({ action, job });
       const btn = (action && job)
-        ? `<button class="btn warn" data-assist-cmd data-assist-action="${action}" data-assist-job="${escape(job)}">confirm</button>`
-        : `<span class="muted">manual</span>`;
-      cmds += `<div class="cmd-row"><code>${escape(c.preview)}</code>${btn}</div>`;
-    }
+        ? `<button class="btn warn" data-assist-cmd data-assist-action="${action}" data-assist-job="${escape(job)}">${num} · confirm</button>`
+        : `<span class="muted">${num} · manual</span>`;
+      cmds += `<div class="cmd-row"><span class="cmd-num">${num}.</span><code>${escape(c.preview)}</code>${btn}</div>`;
+    });
   }
   out.innerHTML = head + body + cmds;
 }

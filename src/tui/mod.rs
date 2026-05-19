@@ -68,6 +68,8 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
 enum LoopMsg {
     Jobs(Result<Vec<crate::slurm::model::Job>>),
     Partitions(Result<Vec<crate::slurm::model::Partition>>),
+    /// LLM probe-test response from the Settings `t` key.
+    AssistTest(Result<crate::assist::AssistResponse>),
 }
 
 async fn run_loop(
@@ -280,7 +282,24 @@ async fn run_loop(
                         }
                     }
                     Intent::SettingsTest => {
-                        run_settings_test(&mut state, config).await;
+                        // Fire the probe as a background task — the LLM
+                        // call can take several seconds and awaiting it
+                        // inline freezes the event loop (no redraws, no
+                        // spinner, no keyboard).
+                        let tx = tx.clone();
+                        let cfg = config.clone();
+                        tokio::spawn(async move {
+                            let req = AssistRequest {
+                                prompt: "Say hello in one short sentence.".to_string(),
+                                job_context: None,
+                                cluster_name: "test".to_string(),
+                                jobs_snapshot: Vec::new(),
+                                partitions: Vec::new(),
+                                history_summary: None,
+                            };
+                            let result = crate::assist::assist(req, &cfg).await;
+                            let _ = tx.send(LoopMsg::AssistTest(result)).await;
+                        });
                     }
                     Intent::WebStart => {
                         run_web_start(&mut state, cli, config, handle, db).await;
@@ -1088,6 +1107,20 @@ fn handle_loop_msg(
             state.refresh.sinfo_in_flight = false;
             tracing::warn!(error = %e, "sinfo refresh failed");
         }
+        LoopMsg::AssistTest(result) => {
+            state.settings.test_in_flight = false;
+            match result {
+                Ok(r) => {
+                    state.settings.test_result =
+                        Some(format!("[{} · {}] {}", r.provider, r.model, r.text));
+                    state.settings.test_error = None;
+                }
+                Err(e) => {
+                    state.settings.test_error = Some(format!("{e}"));
+                    state.settings.test_result = None;
+                }
+            }
+        }
     }
 }
 
@@ -1173,31 +1206,6 @@ async fn save_llm_config(llm: &crate::app::LlmConfig, db: Option<&Db>) {
             anthropic_model: Some(llm.anthropic_model.clone()),
         };
         let _ = crate::db::settings::put_assist(&d.pool, &payload).await;
-    }
-}
-
-/// Send a one-line probe through the configured LLM and stash the result
-/// in `state.settings`. Used by the Settings view's `t` test.
-async fn run_settings_test(state: &mut AppState, config: &Config) {
-    let req = AssistRequest {
-        prompt: "Say hello in one short sentence.".to_string(),
-        job_context: None,
-        cluster_name: "test".to_string(),
-        jobs_snapshot: Vec::new(),
-        partitions: Vec::new(),
-        history_summary: None,
-    };
-    let result = crate::assist::assist(req, config).await;
-    state.settings.test_in_flight = false;
-    match result {
-        Ok(r) => {
-            state.settings.test_result = Some(format!("[{} · {}] {}", r.provider, r.model, r.text));
-            state.settings.test_error = None;
-        }
-        Err(e) => {
-            state.settings.test_error = Some(format!("{e}"));
-            state.settings.test_result = None;
-        }
     }
 }
 

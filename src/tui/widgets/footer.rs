@@ -1,12 +1,15 @@
-//! Keybinding footer with colored hints.
+//! Two-line footer.
 //!
-//! Each hint is a `[key] label` pair. The key gets the accent color (or
-//! red for destructive actions, magenta for special chord keys); the label
-//! stays muted. Errors take precedence over the hint line and dismiss on
-//! the next successful refresh.
+//! Top line: colored key-hints. Each hint is a `[key] label` pair —
+//! key in accent / danger / special color (bold), label muted. Errors
+//! replace this row and clear on the next successful refresh.
+//!
+//! Bottom line: live status strip — view name on the left, then chips
+//! for filter / sort / group / cluster / refresh-status. Gives the
+//! user a stable "where am I and what's running" anchor at all times.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -31,6 +34,14 @@ struct Hint {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState) {
+    // Top line gets the hints (or the error banner if last_error is set).
+    // Bottom line gets the live status chip strip. Splitting the footer
+    // gives ample horizontal room for both without truncation.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+
     if let Some(err) = &state.last_error {
         let line = Line::from(vec![
             Span::styled(
@@ -46,38 +57,108 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
                 Style::default().fg(theme.muted),
             ),
         ]);
-        frame.render_widget(Paragraph::new(line), area);
-        return;
+        frame.render_widget(Paragraph::new(line), chunks[0]);
+    } else {
+        let hints: &[Hint] = match state.view {
+            View::Dashboard | View::Jobs | View::Statistics => &JOBS_HINTS,
+            View::Details => &DETAILS_HINTS,
+            View::Logs => &LOGS_HINTS,
+            View::Settings => &SETTINGS_HINTS,
+        };
+        let mut spans = Vec::with_capacity(hints.len() * 4 + 1);
+        for (i, h) in hints.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Style::default().fg(theme.border)));
+            }
+            let key_color = match h.kind {
+                HintKind::Normal => theme.accent,
+                HintKind::Danger => theme.action_danger,
+                HintKind::Special => theme.cancelled,
+            };
+            spans.push(Span::styled(
+                h.key,
+                Style::default().fg(key_color).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(h.label, Style::default().fg(theme.muted)));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false }),
+            chunks[0],
+        );
     }
 
-    let hints: &[Hint] = match state.view {
-        View::Dashboard | View::Jobs | View::Statistics => &JOBS_HINTS,
-        View::Details => &DETAILS_HINTS,
-        View::Logs => &LOGS_HINTS,
-        View::Settings => &SETTINGS_HINTS,
+    // Bottom status strip — view chip + filter/sort/group/refresh chips.
+    let view_label = match state.view {
+        View::Dashboard => "DASH",
+        View::Jobs => "JOBS",
+        View::Statistics => "STATS",
+        View::Details => "DETAILS",
+        View::Logs => "LOGS",
+        View::Settings => "SETTINGS",
+    };
+    let mut bottom: Vec<Span<'_>> = vec![
+        Span::styled(
+            format!(" {view_label} "),
+            Style::default()
+                .fg(theme.bg)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
+    let chip = |label: &str, value: String, color: ratatui::style::Color| -> Vec<Span<'_>> {
+        vec![
+            Span::styled(format!("{label}:"), Style::default().fg(theme.muted)),
+            Span::styled(
+                value,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ", Style::default()),
+        ]
     };
 
-    let mut spans = Vec::with_capacity(hints.len() * 4 + 1);
-    for (i, h) in hints.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", Style::default().fg(theme.border)));
-        }
-        let key_color = match h.kind {
-            HintKind::Normal => theme.accent,
-            HintKind::Danger => theme.action_danger,
-            HintKind::Special => theme.cancelled, // purple-ish, distinct from accent + danger
-        };
-        spans.push(Span::styled(
-            h.key,
-            Style::default().fg(key_color).add_modifier(Modifier::BOLD),
+    bottom.extend(chip("filter", state.filter.label(), theme.accent));
+    bottom.extend(chip(
+        "sort",
+        format!(
+            "{}{}",
+            state.sort.key.label(),
+            if state.sort.reverse { "↓" } else { "↑" }
+        ),
+        theme.accent,
+    ));
+    bottom.extend(chip(
+        "group",
+        state.group_by.label().to_string(),
+        theme.accent,
+    ));
+    let job_count = if state.text_filter.is_some() && state.jobs.len() != state.all_jobs.len() {
+        format!("{}/{}", state.jobs.len(), state.all_jobs.len())
+    } else {
+        format!("{}", state.all_jobs.len().max(state.jobs.len()))
+    };
+    bottom.extend(chip("jobs", job_count, theme.fg));
+    let refreshing = state.refresh.jobs_in_flight || state.refresh.sinfo_in_flight;
+    if refreshing {
+        bottom.push(Span::styled(
+            "● refreshing",
+            Style::default()
+                .fg(theme.pending)
+                .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(h.label, Style::default().fg(theme.muted)));
+    } else {
+        bottom.push(Span::styled(
+            "● ready",
+            Style::default()
+                .fg(theme.running)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false }),
-        area,
+        Paragraph::new(Line::from(bottom)).wrap(Wrap { trim: false }),
+        chunks[1],
     );
 }
 

@@ -123,11 +123,51 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         theme.header_style().add_modifier(Modifier::BOLD),
     )));
     if state.details_history.is_none() {
+        // Empty-state placeholder bars — render the dot baseline so the
+        // History visual style shows up immediately, before any past
+        // runs have been recorded. Each line is one zero-fill braille
+        // bar at the same widths the real bars will use.
+        let placeholder_width: usize = 30;
+        let baseline = super::braille::bar_pair(0.0, placeholder_width).1;
         lines.push(Line::from(Span::styled(
             "  (no past runs of this job name recorded yet — bars appear after \
              the first finished run)",
             Style::default().fg(theme.muted),
         )));
+        let stub = |label: &'static str| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!("  {label:<10}"), Style::default().fg(theme.muted)),
+                Span::styled(baseline.clone(), Style::default().fg(theme.border)),
+                Span::styled(" —", Style::default().fg(theme.muted)),
+            ])
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  outcomes  ", Style::default().fg(theme.muted)),
+            Span::raw("["),
+            Span::styled(baseline.clone(), Style::default().fg(theme.border)),
+            Span::raw("]"),
+        ]));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "  runtime",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(stub("min"));
+        lines.push(stub("p50"));
+        lines.push(stub("max"));
+        lines.push(stub("suggest"));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "  wait",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(stub("min"));
+        lines.push(stub("p50"));
+        lines.push(stub("max"));
     }
     if let Some(stats) = &state.details_history {
         // Summary line + last-seen.

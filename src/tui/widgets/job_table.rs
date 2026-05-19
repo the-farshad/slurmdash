@@ -109,7 +109,6 @@ fn render_group_row<'a>(
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
     let muted = Style::default().fg(theme.muted);
-    let border = Style::default().fg(theme.border);
 
     // JOBID column: arrow + group key + " (kind)" suffix.
     let jobid_text = format!("{arrow} {key} ({})", kind.label());
@@ -196,8 +195,11 @@ fn render_group_row<'a>(
     } else {
         String::new()
     };
-    // REASON: count of jobs as a subtle summary marker.
-    let reason_text = format!("{} jobs", summary.count);
+    // Group rows put state chips in the wide REASON column where they
+    // fit; ST shows just the total count. Per-row job widths are tight
+    // (ST=7) and the chip strip ("▶ 3  ◷ 7  ✘ 1") overflows quickly.
+    let st_total_text = format!("{}", summary.count);
+    let reason_line = ratatui::text::Line::from(st_spans);
 
     let ribbon = Cell::from(Span::styled("▎", bold_accent));
 
@@ -207,12 +209,12 @@ fn render_group_row<'a>(
         Cell::from(Span::styled(part_text, muted)),
         Cell::from(Span::styled(name_text, muted)),
         Cell::from(Span::styled(user_text, muted)),
-        Cell::from(ratatui::text::Line::from(st_spans)),
+        Cell::from(Span::styled(st_total_text, bold_accent)),
         Cell::from(Span::styled(elapsed_text, muted)),
         Cell::from(Span::styled(limit_text, muted)),
         Cell::from(Span::styled(wait_text, muted)),
         Cell::from(Span::styled(nodes_text, muted)),
-        Cell::from(Span::styled(reason_text, border)),
+        Cell::from(reason_line),
     ])
 }
 

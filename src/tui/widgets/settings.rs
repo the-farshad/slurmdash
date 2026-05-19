@@ -180,11 +180,29 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     frame.render_widget(Paragraph::new(header(" Test")), chunks[6]);
     let mut test_lines: Vec<Line> = Vec::new();
     if state.settings.test_in_flight {
+        // Animate the same braille spinner the header uses so the user
+        // sees the probe is alive — the LLM call can take 10+ seconds
+        // against a cold local model.
+        const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let frame_idx = (state.frame as usize) % SPINNER.len();
+        test_lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled(
+                SPINNER[frame_idx],
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " sending probe to the configured model…",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
         test_lines.push(Line::from(Span::styled(
-            "    sending probe to the configured model…",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
+            "      (don't close the view — response will pop in here)",
+            Style::default().fg(theme.muted),
         )));
     } else if let Some(err) = &state.settings.test_error {
         test_lines.push(Line::from(Span::styled(
