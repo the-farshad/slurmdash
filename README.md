@@ -37,31 +37,6 @@ It does not require `slurmrestd`, custom daemons, or any cluster-side install.
 - SSH private keys, passwords, and full logs are not stored. The local
   database can be disabled, encrypted, or wiped.
 
-### Comparison
-
-| Feature                                | slurmdash (planned) | SlurmTUI | turm | s9s  | sltop |
-|----------------------------------------|:-------------------:|:--------:|:----:|:----:|:-----:|
-| Laptop-first / no server install       | ✅                  | partial  | partial | partial | partial |
-| Multi-cluster profiles                 | ✅                  | —        | —    | —    | —     |
-| Live job table + colors                | ✅                  | ✅       | ✅   | ✅   | ✅    |
-| Job details (`scontrol show job`)      | ✅                  | ✅       | ✅   | ✅   | ✅    |
-| Live stdout/stderr tailing             | ✅                  | ✅       | ✅   | ✅   | —     |
-| Cancel with confirmation               | ✅                  | ✅       | —    | ✅   | ✅    |
-| Hold / release / requeue               | ✅                  | —        | —    | ✅   | —     |
-| Progress bars (time / array / queue)   | ✅                  | —        | —    | —    | partial |
-| Terminal charts (queue, partition, GPU)| ✅                  | —        | —    | —    | partial |
-| Pending-reason explainer               | ✅                  | —        | —    | —    | ✅    |
-| Sbatch submission wizard               | ✅                  | —        | —    | —    | —     |
-| Local web UI                           | ✅                  | —        | —    | —    | —     |
-| Mouse-first controls                   | ✅                  | partial  | —    | partial | ✅ |
-| Local desktop notifications            | ✅                  | —        | —    | —    | —     |
-| Local SQLite cache + history           | ✅                  | —        | —    | —    | —     |
-| Offline review mode                    | ✅                  | —        | —    | —    | —     |
-| Built-in LLM prompt assistant          | ✅ (Phase 4)        | —        | —    | —    | —     |
-| Smart resource recommendations         | ✅ (Phase 5)        | —        | —    | —    | —     |
-
----
-
 ## Quick start
 
 > Not yet shippable. Once Phase 1 lands:
