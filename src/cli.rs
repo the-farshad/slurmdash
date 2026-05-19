@@ -147,6 +147,18 @@ pub enum Command {
         since_days: i64,
     },
 
+    /// Local config-file helpers
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
+
+    /// Print shell completions to stdout
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Local web UI (Phase 3 — not yet implemented)
     Web {
         #[arg(long)]
@@ -158,6 +170,23 @@ pub enum Command {
         #[arg(long)]
         no_open_browser: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCmd {
+    /// Write a starter config to ~/.config/slurmdash/config.toml
+    Init {
+        /// Overwrite an existing file
+        #[arg(long)]
+        force: bool,
+        /// Write to this path instead of the default
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+    /// Print the resolved config (defaults filled in) as TOML
+    Show,
+    /// Print the path slurmdash would read from
+    Path,
 }
 
 #[derive(Debug, Subcommand)]
@@ -238,6 +267,13 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
             .await
         }
         Some(Command::Assist { prompt, job }) => run_assist(&cli, &config, prompt, job).await,
+        Some(Command::Config { cmd }) => run_config(cmd, &config, cli.config.as_deref()).await,
+        Some(Command::Completions { shell }) => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "slurmdash", &mut std::io::stdout());
+            Ok(())
+        }
         Some(Command::Recommend {
             job_name,
             since_days,
@@ -356,6 +392,50 @@ async fn run_recommend(
         }
     }
     Ok(())
+}
+
+const STARTER_CONFIG: &str = include_str!("../assets/config/starter.toml");
+
+async fn run_config(
+    cmd: ConfigCmd,
+    config: &crate::config::Config,
+    cli_config_path: Option<&std::path::Path>,
+) -> Result<()> {
+    match cmd {
+        ConfigCmd::Init { force, path } => {
+            let target = path
+                .or_else(|| cli_config_path.map(|p| p.to_path_buf()))
+                .or_else(crate::config::default_config_path)
+                .context("could not determine config path")?;
+            if target.exists() && !force {
+                anyhow::bail!(
+                    "{} already exists; pass --force to overwrite",
+                    target.display()
+                );
+            }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::write(&target, STARTER_CONFIG)
+                .with_context(|| format!("writing {}", target.display()))?;
+            println!("wrote {}", target.display());
+            Ok(())
+        }
+        ConfigCmd::Show => {
+            let serialized = toml::to_string_pretty(config).context("serializing config")?;
+            println!("{serialized}");
+            Ok(())
+        }
+        ConfigCmd::Path => {
+            let p = cli_config_path
+                .map(|p| p.to_path_buf())
+                .or_else(crate::config::default_config_path)
+                .context("could not determine config path")?;
+            println!("{}", p.display());
+            Ok(())
+        }
+    }
 }
 
 async fn run_assist(

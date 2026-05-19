@@ -1,0 +1,49 @@
+# slurmdash configuration file.
+#
+# Documentation: https://github.com/the-farshad/slurmdash
+#
+# After editing, run `slurmdash connect <profile-name>` or just
+# `slurmdash --cluster <profile-name>`.
+
+[ui]
+theme = "dark"            # dark | light | high-contrast | colorblind-safe
+refresh_seconds = 10
+mouse = true
+show_charts = true
+compact = false
+
+[database]
+enabled = true
+engine = "sqlite"
+auto_migrate = true
+retention_days = 90
+cache_ttl_seconds = 30
+store_logs = false
+store_log_excerpts = true
+max_log_excerpt_lines = 300
+
+# ---------------------------------------------------------------------------
+# Cluster profiles
+# ---------------------------------------------------------------------------
+# Define one section per cluster. The simplest form delegates everything
+# to your existing ~/.ssh/config — point `host` at a Host alias and
+# slurmdash will inherit its Hostname / User / IdentityFile / Port.
+
+# [clusters.cluster1]
+# host = "my-cluster"        # an alias from your ~/.ssh/config
+
+# Or specify connection details inline (no ssh-config entry needed):
+
+# [clusters.cluster2]
+# host = "login.example.edu"
+# user = "alice"
+# port = 22
+# ssh_key = "~/.ssh/id_ed25519"
+# default_account = "project1"
+# default_partition = "gpu"
+
+# A `local = true` profile skips SSH entirely; useful for development
+# or when running slurmdash on a node that already has the Slurm CLI.
+
+[clusters.local]
+local = true

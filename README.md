@@ -340,6 +340,24 @@ slurmdash recommend --job-name train_resnet50
 slurmdash db status
 ```
 
+### First-run helpers
+
+```sh
+# Write a starter ~/.config/slurmdash/config.toml
+slurmdash config init
+
+# Print the resolved config (with defaults filled in)
+slurmdash config show
+
+# Print the path slurmdash would read from
+slurmdash config path
+
+# Shell completions — pipe to the standard location for your shell
+slurmdash completions bash  > ~/.local/share/bash-completion/completions/slurmdash
+slurmdash completions zsh   > ~/.zfunc/_slurmdash
+slurmdash completions fish  > ~/.config/fish/completions/slurmdash.fish
+```
+
 ## Keyboard reference
 
 | Key            | Where      | Action                                       |

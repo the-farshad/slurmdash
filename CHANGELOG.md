@@ -5,6 +5,32 @@ All notable changes to slurmdash are documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `slurmdash config init|show|path` — write a starter config to
+  `~/.config/slurmdash/config.toml`, print the resolved config as
+  TOML, or print the discovered config path.
+- `slurmdash completions <shell>` — generate bash / zsh / fish /
+  powershell / elvish completion scripts via `clap_complete`.
+
+### Changed
+
+- README leads with a single Install section that lists per-platform
+  tarball one-liners (Linux x86_64, macOS Intel, macOS Apple Silicon)
+  plus the build-from-source path.
+- Release workflow now builds three targets on tag push: Linux x86_64,
+  macOS Intel, macOS Apple Silicon. Each upload includes a sha256
+  sidecar.
+- CI smoke-tests the built binary with `--version`, `--help`, and a
+  walk of every subcommand to catch dispatch-table regressions.
+
+### Fixed
+
+- Removed remaining "laptop" / "frontier" wording from docs and
+  examples — replaced with generic placeholders.
+
 ## [0.1.0] — 2026-05-19
 
 The first tagged release. Everything described below is included.

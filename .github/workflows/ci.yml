@@ -35,3 +35,25 @@ jobs:
 
       - name: Unit + integration tests
         run: cargo test --workspace --no-fail-fast
+
+      - name: CLI smoke test
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          BIN=./target/release/slurmdash
+          $BIN --version
+          $BIN --help > /dev/null
+          for sub in db assist recommend config completions web logs cancel hold release requeue submit; do
+            $BIN "$sub" --help > /dev/null
+          done
+          # Subcommands of `db` and `config`:
+          for sub in status migrate vacuum backup clear-cache clear-history export; do
+            $BIN db "$sub" --help > /dev/null
+          done
+          for sub in init show path; do
+            $BIN config "$sub" --help > /dev/null
+          done
+          # Generated completion scripts must be non-empty for each shell:
+          for shell in bash zsh fish powershell elvish; do
+            test -s <($BIN completions "$shell")
+          done
