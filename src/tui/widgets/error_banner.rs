@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use crate::tui::theme::Theme;
 
@@ -13,6 +13,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, message: &str, theme: &Theme) {
     let block = Block::default()
         .title(" Error ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.action_danger));
 
     let lines = vec![

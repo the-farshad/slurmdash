@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::slurm::model::Job;
 use crate::slurm::state::JobState;
@@ -19,6 +19,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
     let block = Block::default()
         .title(" Ending soon ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     let inner = block.inner(area);
     frame.render_widget(block, area);

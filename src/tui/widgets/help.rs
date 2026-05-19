@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::tui::theme::Theme;
 
@@ -59,6 +59,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
     let block = Block::default()
         .title(" Help ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }

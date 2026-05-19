@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::AssistDialog;
 use crate::tui::theme::Theme;
@@ -16,6 +16,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
     let block = Block::default()
         .title(" Assist (Ctrl+K) ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -31,6 +32,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
 
     let input_block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
         .title(Span::styled(" prompt ", theme.footer_style()));
     let prompt_line = Line::from(vec![
@@ -79,6 +81,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dialog: &AssistDialog, theme: &
 
     let body_block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     frame.render_widget(
         Paragraph::new(body)

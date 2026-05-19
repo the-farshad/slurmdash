@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Row, Table};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table};
 
 use crate::slurm::model::Job;
 use crate::slurm::state::JobState;
@@ -28,6 +28,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, jobs: &[Job], theme: &Theme) {
     let block = Block::default()
         .title(" Top users ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);

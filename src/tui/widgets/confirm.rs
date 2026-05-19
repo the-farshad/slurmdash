@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::actions::ActionKind;
 use crate::app::Confirm;
@@ -44,6 +44,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, confirm: &Confirm, theme: &Them
     let block = Block::default()
         .title(" Confirm ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(title_color));
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }

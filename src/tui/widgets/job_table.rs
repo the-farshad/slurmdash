@@ -315,10 +315,7 @@ fn state_glyph(s: &JobState) -> &'static str {
         JobState::Completing => "›",
         JobState::Completed => "✓",
         JobState::Cancelled => "⊘",
-        JobState::Failed
-        | JobState::NodeFail
-        | JobState::BootFail
-        | JobState::OutOfMemory => "✘",
+        JobState::Failed | JobState::NodeFail | JobState::BootFail | JobState::OutOfMemory => "✘",
         JobState::Timeout | JobState::Deadline => "⊗",
         JobState::Preempted => "↶",
         JobState::Held => "‖",

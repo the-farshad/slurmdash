@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::slurm::model::ClusterResources;
 use crate::tui::theme::Theme;
@@ -13,6 +13,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, r: &ClusterResources, theme: &T
     let block = Block::default()
         .title(" Resources ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(theme.border_style());
     let inner = block.inner(area);
     frame.render_widget(block, area);
