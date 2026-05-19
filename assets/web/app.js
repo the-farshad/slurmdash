@@ -894,7 +894,17 @@ function renderAssistResponse(r) {
   let cmds = '';
   lastCommands = [];
   if (r.commands && r.commands.length) {
-    cmds = '<hr>';
+    // Hard visual break: a labeled "runnable" banner in the action
+    // color (purple, same one the assist key uses in the footer)
+    // marks the boundary between read-only response text and rows
+    // the user can actually click to execute.
+    cmds = `
+      <div class="cmd-section">
+        <div class="cmd-banner">
+          <span class="cmd-arrow">▼</span>
+          <strong>proposed commands</strong>
+          <span class="muted">— press 1–9 to run · they always re-confirm in the modal</span>
+        </div>`;
     r.commands.slice(0, 9).forEach((c, idx) => {
       const num = idx + 1;
       const kind = c.kind?.type ?? '';
@@ -910,6 +920,7 @@ function renderAssistResponse(r) {
         : `<span class="muted">${num} · manual</span>`;
       cmds += `<div class="cmd-row"><span class="cmd-num">${num}.</span><code>${escape(c.preview)}</code>${btn}</div>`;
     });
+    cmds += `<div class="cmd-banner end"><span class="cmd-arrow">▲</span><span class="muted">end runnable</span></div></div>`;
   }
   out.innerHTML = head + body + cmds;
 }

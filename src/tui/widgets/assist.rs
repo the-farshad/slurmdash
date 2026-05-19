@@ -101,17 +101,64 @@ pub fn render(
             out.push(line);
         }
         if !resp.commands.is_empty() {
+            // Hard visual break between the free-text response and the
+            // runnable commands — they live in two different mental
+            // models (read vs. act) and shouldn't blur together. The
+            // commands section gets:
+            //   1. a blank gutter line,
+            //   2. a heavy horizontal rule (──── … ▼) in the special
+            //      "action" color used by the footer,
+            //   3. a labeled banner row,
+            //   4. each command framed by a ▎ ribbon in the same color,
+            //   5. a closing ──── … ▲ rule.
+            // The shape itself signals "this is a different region".
+            let action_color = theme.cancelled;
             out.push(Line::raw(""));
-            out.push(Line::styled(
-                " proposed commands (press 1-9 to confirm)",
-                theme.header_style(),
-            ));
+            let rule_top = format!("{:─^60}", " ▼ runnable ");
+            out.push(Line::from(Span::styled(
+                rule_top,
+                Style::default()
+                    .fg(action_color)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            out.push(Line::from(vec![
+                Span::styled(" ▎ ", Style::default().fg(action_color)),
+                Span::styled(
+                    "proposed commands  ",
+                    Style::default()
+                        .fg(action_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "press 1–9 to run · they always re-confirm in the modal",
+                    Style::default().fg(theme.muted),
+                ),
+            ]));
+            out.push(Line::raw(""));
             for (i, cmd) in resp.commands.iter().enumerate().take(9) {
                 out.push(Line::from(vec![
-                    Span::styled(format!(" {}. ", i + 1), Style::default().fg(theme.accent)),
-                    Span::styled(cmd.preview.clone(), Style::default().fg(theme.accent)),
+                    Span::styled(" ▎ ", Style::default().fg(action_color)),
+                    Span::styled(
+                        format!("{}.", i + 1),
+                        Style::default()
+                            .fg(action_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        cmd.preview.clone(),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
             }
+            out.push(Line::raw(""));
+            let rule_bot = format!("{:─^60}", " ▲ end runnable ");
+            out.push(Line::from(Span::styled(
+                rule_bot,
+                Style::default().fg(action_color),
+            )));
         }
         out
     } else {

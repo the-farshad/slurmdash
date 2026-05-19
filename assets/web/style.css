@@ -321,6 +321,38 @@ table#jobs .row-actions { display: flex; gap: 4px; }
 }
 #assist-response .cmd-row code { color: var(--accent); white-space: pre-wrap; }
 
+/* Visually separate the runnable-commands region from the prose
+   response above it. Purple band + left-edge ribbon mirrors the
+   "Special" action color in the TUI footer so the same things look
+   the same in both surfaces. */
+#assist-response .cmd-section {
+  margin-top: 12px;
+  border-left: 3px solid var(--cancelled);
+  background: rgba(163, 113, 247, 0.06);
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+#assist-response .cmd-banner {
+  color: var(--cancelled);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  display: flex; gap: 8px; align-items: center;
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 6px;
+}
+#assist-response .cmd-banner.end {
+  border-bottom: none;
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+  margin-bottom: 0;
+  padding-top: 4px;
+}
+#assist-response .cmd-banner .cmd-arrow {
+  color: var(--cancelled); font-weight: 700;
+}
+#assist-response .cmd-banner strong { color: var(--cancelled); }
+
 /* Markdown subset rendered inside the assist response. */
 #assist-response .md { white-space: normal; }
 #assist-response .md h3,
