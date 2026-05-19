@@ -4,8 +4,9 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
-use crate::app::{AppState, DisplayRow, FilterMode, GroupBy, GroupSummary};
+use crate::app::{AppState, DisplayRow, FilterMode, GroupBy, GroupSummary, SortKey};
 use crate::slurm::model::Job;
+use crate::slurm::state::JobState;
 use crate::tui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
@@ -15,20 +16,30 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         return;
     }
 
-    let header_cells = [
-        "JOBID",
-        "PART",
-        "NAME",
-        "USER",
-        "ST",
-        "ELAPSED",
-        "LIMIT",
-        "WAIT",
-        "N",
-        "REASON / NODES",
+    // Build header cells with a directional sort arrow on the active key so
+    // the user can see at a glance which column the table is ordered by and
+    // which direction the next `s` will rotate.
+    let arrow = |k: SortKey| -> &'static str {
+        if state.sort.key == k {
+            if state.sort.reverse { " ↓" } else { " ↑" }
+        } else {
+            ""
+        }
+    };
+    let header_titles: [String; 10] = [
+        format!("JOBID{}", arrow(SortKey::JobId)),
+        format!("PART{}", arrow(SortKey::Partition)),
+        format!("NAME{}", arrow(SortKey::Name)),
+        format!("USER{}", arrow(SortKey::User)),
+        format!("ST{}", arrow(SortKey::State)),
+        format!("ELAPSED{}", arrow(SortKey::Elapsed)),
+        format!("LIMIT{}", arrow(SortKey::TimeLimit)),
+        "WAIT".into(),
+        "N".into(),
+        "REASON / NODES".into(),
     ];
     let header = Row::new(
-        header_cells
+        header_titles
             .into_iter()
             .map(|h| Cell::from(Span::styled(h, Style::default().fg(theme.accent).bold()))),
     );
@@ -51,15 +62,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         })
         .collect();
 
+    // ELAPSED widens to 14 to fit an inline progress bar (6 cells) + space +
+    // up to a 6-char duration text ("99h59m"). ST widens to 5 for "glyph + short".
     let widths = [
         Constraint::Length(10),
         Constraint::Length(10),
         Constraint::Length(20),
         Constraint::Length(10),
-        Constraint::Length(4),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(7),
+        Constraint::Length(5),
+        Constraint::Length(14),
+        Constraint::Length(8),
+        Constraint::Length(6),
         Constraint::Length(4),
         Constraint::Fill(1),
     ];
@@ -119,18 +132,19 @@ fn render_group_row<'a>(
         (_, n) => format!("{n} users"),
     };
 
-    // ST column: state breakdown chips (R/PD/F/etc.) concatenated.
+    // ST column: state breakdown chips (▶3 ◷7 …) using the same glyphs the
+    // job rows use, so the eye can map group totals back to individual rows.
     let mut st_spans: Vec<Span<'_>> = Vec::new();
-    let state_chips: [(u32, &str, ratatui::style::Color); 6] = [
-        (summary.running, "R", theme.running),
-        (summary.pending, "PD", theme.pending),
-        (summary.completing, "CG", theme.completing),
-        (summary.held, "H", theme.held),
-        (summary.failed, "F", theme.failed),
-        (summary.completed, "CD", theme.completed),
+    let state_chips: [(u32, &str, &str, ratatui::style::Color); 6] = [
+        (summary.running, "▶", "R", theme.running),
+        (summary.pending, "◷", "PD", theme.pending),
+        (summary.completing, "›", "CG", theme.completing),
+        (summary.held, "‖", "H", theme.held),
+        (summary.failed, "✘", "F", theme.failed),
+        (summary.completed, "✓", "CD", theme.completed),
     ];
     let mut first = true;
-    for (n, label, color) in state_chips {
+    for (n, glyph, _short, color) in state_chips {
         if n == 0 {
             continue;
         }
@@ -138,7 +152,7 @@ fn render_group_row<'a>(
             st_spans.push(Span::styled(" ", muted));
         }
         st_spans.push(Span::styled(
-            format!("{n}{label}"),
+            format!("{glyph}{n}"),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
         first = false;
@@ -191,15 +205,18 @@ fn render_group_row<'a>(
 }
 
 fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String]) -> Row<'a> {
-    let state_cell = Cell::from(Span::styled(
-        j.state.short().to_string(),
-        theme.job_state_style(&j.state),
-    ));
+    let state_style = theme.job_state_style(&j.state);
+    // Compact ST cell: glyph + short label, e.g. `▶ R`, `◷ PD`. The glyph
+    // is in state color/bold; the short label follows in the same style so
+    // existing scripts/screenshots that look for "R"/"PD" still work.
+    let state_cell = Cell::from(Line::from(vec![
+        Span::styled(state_glyph(&j.state), state_style),
+        Span::raw(" "),
+        Span::styled(j.state.short().to_string(), state_style),
+    ]));
 
-    let elapsed = j
-        .elapsed_seconds
-        .map(crate::tui::format::hms)
-        .unwrap_or_else(|| "-".into());
+    let elapsed_cell = render_elapsed_cell(j, theme);
+
     let limit = j
         .time_limit_seconds
         .map(crate::tui::format::hms)
@@ -233,7 +250,7 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String])
         Cell::from(Line::from(highlight_spans(&j.name, terms, theme))),
         Cell::from(Line::from(highlight_spans(&j.user, terms, theme))),
         state_cell,
-        Cell::from(elapsed),
+        elapsed_cell,
         Cell::from(limit),
         Cell::from(wait),
         Cell::from(j.nodes.to_string()),
@@ -243,6 +260,71 @@ fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String])
             theme,
         ))),
     ])
+}
+
+/// Render the ELAPSED cell. For RUNNING jobs with a known time limit, this
+/// is a 6-cell progress bar (`▰▰▰▱▱▱`) coloured by how much of the limit is
+/// used, followed by the duration text — gives an instant visual cue for
+/// "how close is this job to wallclock timeout" without needing to read
+/// LIMIT and do arithmetic. Other states show just the duration.
+fn render_elapsed_cell<'a>(j: &'a Job, theme: &Theme) -> Cell<'a> {
+    let elapsed_text = j
+        .elapsed_seconds
+        .map(crate::tui::format::hms)
+        .unwrap_or_else(|| "-".into());
+
+    let (Some(used), Some(limit)) = (j.elapsed_seconds, j.time_limit_seconds) else {
+        return Cell::from(elapsed_text);
+    };
+    if !matches!(j.state, JobState::Running) || limit == 0 {
+        return Cell::from(elapsed_text);
+    }
+    let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
+    let bar_color = match pct {
+        p if p < 0.5 => theme.usage_low,
+        p if p < 0.75 => theme.usage_med,
+        p if p < 0.9 => theme.usage_high,
+        _ => theme.usage_critical,
+    };
+    let bar = progress_bar(pct, 6);
+    Cell::from(Line::from(vec![
+        Span::styled(bar, Style::default().fg(bar_color)),
+        Span::raw(" "),
+        Span::styled(elapsed_text, Style::default().fg(theme.fg)),
+    ]))
+}
+
+/// Solid/empty Unicode bar of fixed cell width.
+fn progress_bar(pct: f64, cells: usize) -> String {
+    let filled = (pct.clamp(0.0, 1.0) * cells as f64).round() as usize;
+    let mut s = String::with_capacity(cells * 3);
+    for i in 0..cells {
+        s.push(if i < filled { '▰' } else { '▱' });
+    }
+    s
+}
+
+/// Single-cell Unicode glyph for the job state. Each is a narrow
+/// (single-column) BMP character so column widths stay stable across
+/// terminals; we deliberately avoid VS16 / emoji presentation that some
+/// terminals render fullwidth.
+fn state_glyph(s: &JobState) -> &'static str {
+    match s {
+        JobState::Running => "▶",
+        JobState::Pending => "◷",
+        JobState::Completing => "›",
+        JobState::Completed => "✓",
+        JobState::Cancelled => "⊘",
+        JobState::Failed
+        | JobState::NodeFail
+        | JobState::BootFail
+        | JobState::OutOfMemory => "✘",
+        JobState::Timeout | JobState::Deadline => "⊗",
+        JobState::Preempted => "↶",
+        JobState::Held => "‖",
+        JobState::Suspended => "▪",
+        JobState::Other(_) => "•",
+    }
 }
 
 /// Split `text` into spans, highlighting any (case-insensitive) substring
