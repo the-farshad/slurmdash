@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use ratatui::layout::Rect;
 
@@ -73,6 +73,13 @@ pub struct AppState {
     pub filter_input: Option<String>,
     /// Background refresh state — set when a squeue/sinfo task is in flight.
     pub refresh: RefreshFlags,
+    /// Grouping mode (Tab cycles).
+    pub group_by: GroupBy,
+    /// Group keys the user has collapsed (Enter on a group header).
+    pub collapsed_groups: HashSet<String>,
+    /// Cached row layout for the job table. Rebuilt whenever jobs / filter /
+    /// sort / group state changes.
+    pub display_rows: Vec<DisplayRow>,
     /// Bounds of the job-table widget on the last render, used to translate
     /// mouse clicks into row indices.
     pub table_rect: Option<Rect>,
@@ -88,6 +95,50 @@ pub struct AppState {
 pub struct RefreshFlags {
     pub jobs_in_flight: bool,
     pub sinfo_in_flight: bool,
+}
+
+/// What `Tab` cycles through. Groups in the job table by the chosen field.
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub enum GroupBy {
+    /// Flat table, no grouping.
+    #[default]
+    None,
+    User,
+    Partition,
+    State,
+}
+
+impl GroupBy {
+    pub fn cycle(self) -> Self {
+        match self {
+            GroupBy::None => GroupBy::User,
+            GroupBy::User => GroupBy::Partition,
+            GroupBy::Partition => GroupBy::State,
+            GroupBy::State => GroupBy::None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupBy::None => "flat",
+            GroupBy::User => "user",
+            GroupBy::Partition => "partition",
+            GroupBy::State => "state",
+        }
+    }
+}
+
+/// One renderable row in the job table. Drives both rendering and
+/// selection navigation when grouping is on.
+#[derive(Debug, Clone)]
+pub enum DisplayRow {
+    Group {
+        key: String,
+        count: u32,
+        collapsed: bool,
+    },
+    /// Index into [`AppState::jobs`].
+    JobIndex(usize),
 }
 
 #[derive(Debug, Default)]
@@ -306,10 +357,38 @@ fn matches_text_filter(j: &Job, filter: Option<&str>) -> bool {
         || j.reason_or_nodelist.to_lowercase().contains(&q)
 }
 
+fn build_grouped<F: Fn(&Job) -> String>(
+    jobs: &[Job],
+    collapsed: &HashSet<String>,
+    field: F,
+) -> Vec<DisplayRow> {
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, j) in jobs.iter().enumerate() {
+        groups.entry(field(j)).or_default().push(i);
+    }
+    let mut out = Vec::new();
+    for (key, members) in groups {
+        let count = members.len() as u32;
+        let collapsed = collapsed.contains(&key);
+        out.push(DisplayRow::Group {
+            key,
+            count,
+            collapsed,
+        });
+        if !collapsed {
+            for idx in members {
+                out.push(DisplayRow::JobIndex(idx));
+            }
+        }
+    }
+    out
+}
+
 impl AppState {
     /// Rebuild `jobs` from `all_jobs` using the current `text_filter`,
-    /// reapply `sort`, and clamp the selection. Call after `all_jobs` or
-    /// `text_filter` or `sort` changes.
+    /// reapply `sort`, regenerate `display_rows`, and clamp the selection.
+    /// Call after `all_jobs` / `text_filter` / `sort` / `group_by` /
+    /// `collapsed_groups` changes.
     pub fn rebuild_filtered_jobs(&mut self) {
         let filter = self.text_filter.as_deref();
         self.jobs = self
@@ -319,9 +398,39 @@ impl AppState {
             .cloned()
             .collect();
         apply_sort(&mut self.jobs, self.sort);
-        if !self.jobs.is_empty() && self.selected >= self.jobs.len() {
-            self.selected = self.jobs.len() - 1;
+        self.rebuild_display_rows();
+    }
+
+    /// Recompute [`display_rows`] from `jobs` + `group_by` + `collapsed_groups`.
+    pub fn rebuild_display_rows(&mut self) {
+        self.display_rows = match self.group_by {
+            GroupBy::None => (0..self.jobs.len()).map(DisplayRow::JobIndex).collect(),
+            GroupBy::User => build_grouped(&self.jobs, &self.collapsed_groups, |j| j.user.clone()),
+            GroupBy::Partition => {
+                build_grouped(&self.jobs, &self.collapsed_groups, |j| j.partition.clone())
+            }
+            GroupBy::State => build_grouped(&self.jobs, &self.collapsed_groups, |j| {
+                j.state.short().to_string()
+            }),
+        };
+        if !self.display_rows.is_empty() && self.selected >= self.display_rows.len() {
+            self.selected = self.display_rows.len() - 1;
         }
+    }
+
+    /// Toggle collapse state of the group at the selected row, if any.
+    /// Returns true if a group was toggled.
+    pub fn toggle_selected_group(&mut self) -> bool {
+        let key_opt = match self.display_rows.get(self.selected) {
+            Some(DisplayRow::Group { key, .. }) => Some(key.clone()),
+            _ => None,
+        };
+        let Some(key) = key_opt else { return false };
+        if !self.collapsed_groups.insert(key.clone()) {
+            self.collapsed_groups.remove(&key);
+        }
+        self.rebuild_display_rows();
+        true
     }
 
     pub fn push_resource_sample(&mut self, sample: ResourceSample) {
@@ -332,18 +441,36 @@ impl AppState {
     }
 
     pub fn select_next(&mut self) {
-        if self.jobs.is_empty() {
+        let n = self.display_rows.len();
+        if n == 0 {
             self.selected = 0;
             return;
         }
-        self.selected = (self.selected + 1).min(self.jobs.len() - 1);
+        self.selected = (self.selected + 1).min(n - 1);
     }
 
     pub fn select_prev(&mut self) {
         self.selected = self.selected.saturating_sub(1);
     }
 
+    pub fn select_page_down(&mut self, page: usize) {
+        let n = self.display_rows.len();
+        if n == 0 {
+            return;
+        }
+        self.selected = (self.selected + page).min(n - 1);
+    }
+
+    pub fn select_page_up(&mut self, page: usize) {
+        self.selected = self.selected.saturating_sub(page);
+    }
+
+    /// The Job at the current selection, if the selected row is a job row
+    /// (group headers return None).
     pub fn selected_job(&self) -> Option<&Job> {
-        self.jobs.get(self.selected)
+        match self.display_rows.get(self.selected)? {
+            DisplayRow::JobIndex(idx) => self.jobs.get(*idx),
+            _ => None,
+        }
     }
 }

@@ -31,8 +31,8 @@ pub fn render(
     let filled = (pct * width as f64).round() as usize;
     let bar_color = gradient_color(pct, theme);
 
-    let bar_fill: String = "█".repeat(filled);
-    let bar_rest: String = "░".repeat(width as usize - filled);
+    let bar_fill: String = "▰".repeat(filled);
+    let bar_rest: String = "▱".repeat(width as usize - filled);
 
     let line = Line::from(vec![
         Span::styled(format!("{label:<6}"), theme.footer_style()),

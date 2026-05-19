@@ -103,8 +103,8 @@ fn bar_segment<'a>(label: &'a str, pct: f64, bar_w: usize, theme: &Theme) -> Vec
     let color = gradient(pct, theme);
     let inner = bar_w.saturating_sub(label.len() + 6);
     let filled = (pct * inner as f64).round() as usize;
-    let fill: String = "█".repeat(filled);
-    let empty: String = "░".repeat(inner.saturating_sub(filled));
+    let fill: String = "▰".repeat(filled);
+    let empty: String = "▱".repeat(inner.saturating_sub(filled));
     vec![
         Span::styled(format!("{label} "), theme.footer_style()),
         Span::styled(fill, Style::default().fg(color)),

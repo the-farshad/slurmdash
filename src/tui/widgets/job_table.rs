@@ -1,10 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
-use crate::app::AppState;
+use crate::app::{AppState, DisplayRow, GroupBy};
 use crate::slurm::model::Job;
 use crate::tui::theme::Theme;
 
@@ -26,7 +26,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             .map(|h| Cell::from(Span::styled(h, Style::default().fg(theme.accent).bold()))),
     );
 
-    let rows: Vec<Row> = state.jobs.iter().map(|j| render_row(j, theme)).collect();
+    let grouped = state.group_by != GroupBy::None;
+    let rows: Vec<Row> = state
+        .display_rows
+        .iter()
+        .map(|r| match r {
+            DisplayRow::Group {
+                key,
+                count,
+                collapsed,
+            } => render_group_row(state.group_by, key, *count, *collapsed, theme),
+            DisplayRow::JobIndex(idx) => match state.jobs.get(*idx) {
+                Some(j) => render_job_row(j, theme, grouped),
+                None => Row::new(vec![Cell::from("")]),
+            },
+        })
+        .collect();
 
     let widths = [
         Constraint::Length(10),
@@ -54,7 +69,39 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
-fn render_row<'a>(j: &'a Job, theme: &Theme) -> Row<'a> {
+fn render_group_row<'a>(
+    kind: GroupBy,
+    key: &'a str,
+    count: u32,
+    collapsed: bool,
+    theme: &Theme,
+) -> Row<'a> {
+    let arrow = if collapsed { "▶" } else { "▼" };
+    let label = format!(
+        " {arrow}  {key}    {count} {} ({})",
+        if count == 1 { "job" } else { "jobs" },
+        kind.label()
+    );
+    let cell = Cell::from(Span::styled(
+        label,
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    ));
+    Row::new(vec![
+        cell,
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(""),
+    ])
+}
+
+fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool) -> Row<'a> {
     let state_cell = Cell::from(Span::styled(
         j.state.short().to_string(),
         theme.job_state_style(&j.state),
@@ -69,8 +116,14 @@ fn render_row<'a>(j: &'a Job, theme: &Theme) -> Row<'a> {
         .map(crate::tui::format::hms)
         .unwrap_or_else(|| "-".into());
 
+    let id_cell = if indent {
+        Cell::from(format!("  {}", j.job_id))
+    } else {
+        Cell::from(j.job_id.clone())
+    };
+
     Row::new(vec![
-        Cell::from(j.job_id.clone()),
+        id_cell,
         Cell::from(j.partition.clone()),
         Cell::from(Line::from(Span::raw(j.name.clone()))),
         Cell::from(j.user.clone()),

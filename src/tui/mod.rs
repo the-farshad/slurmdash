@@ -291,7 +291,7 @@ fn draw(
             }
         }
 
-        widgets::footer::render(frame, outer[2], theme, state.view);
+        widgets::footer::render(frame, outer[2], theme, state);
 
         if state.show_help {
             widgets::help::render(frame, frame.area(), theme);
@@ -301,9 +301,6 @@ fn draw(
         }
         if let Some(dialog) = &state.assist {
             widgets::assist::render(frame, frame.area(), dialog, theme);
-        }
-        if let Some(err) = &state.last_error {
-            widgets::error_banner::render(frame, frame.area(), err, theme);
         }
     })?;
     Ok(table_rect)
@@ -334,17 +331,19 @@ fn render_dashboard(
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(22),
-            Constraint::Percentage(26),
-            Constraint::Percentage(22),
+            Constraint::Percentage(24),
+            Constraint::Percentage(18),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(18),
         ])
         .split(chunks[1]);
 
     widgets::resources::render(frame, top[0], &state.resources, theme);
     widgets::queue::render(frame, top[1], &state.jobs, theme);
     widgets::by_user::render(frame, top[2], &state.jobs, theme);
-    widgets::ending_soon::render(frame, top[3], &state.jobs, theme);
+    widgets::by_node::render(frame, top[3], &state.jobs, theme);
+    widgets::ending_soon::render(frame, top[4], &state.jobs, theme);
 
     widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
     widgets::job_table::render(frame, chunks[3], state, theme);
@@ -489,9 +488,9 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         return Intent::None;
     }
 
-    if state.last_error.is_some() {
-        state.last_error = None;
-    }
+    // Note: last_error renders inline in the footer now, so it does not
+    // gate further keypresses — only the modals above do. Errors clear
+    // automatically on the next successful refresh.
 
     // View switches are global (skip in input modes).
     match key.code {
@@ -532,7 +531,15 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
             Intent::None
         }
         KeyCode::Char('G') | KeyCode::End => {
-            state.selected = state.jobs.len().saturating_sub(1);
+            state.selected = state.display_rows.len().saturating_sub(1);
+            Intent::None
+        }
+        KeyCode::PageDown => {
+            state.select_page_down(10);
+            Intent::None
+        }
+        KeyCode::PageUp => {
+            state.select_page_up(10);
             Intent::None
         }
         KeyCode::Char('R') | KeyCode::Char('r') => Intent::Refresh,
@@ -544,7 +551,21 @@ fn handle_key_jobs(key: crossterm::event::KeyEvent, state: &mut AppState) -> Int
             state.filter_input = Some(state.text_filter.clone().unwrap_or_default());
             Intent::None
         }
-        KeyCode::Enter | KeyCode::Char('d') => Intent::OpenDetails,
+        KeyCode::Tab => {
+            state.group_by = state.group_by.cycle();
+            // Reset collapse so the new grouping starts fully expanded.
+            state.collapsed_groups.clear();
+            state.rebuild_display_rows();
+            Intent::None
+        }
+        KeyCode::Enter | KeyCode::Char('d') => {
+            // Enter on a group header toggles collapse; otherwise → details.
+            if state.toggle_selected_group() {
+                Intent::None
+            } else {
+                Intent::OpenDetails
+            }
+        }
         KeyCode::Char('l') => Intent::OpenLog(LogKind::Stdout),
         KeyCode::Char('e') => Intent::OpenLog(LogKind::Stderr),
         KeyCode::Char('s') => {
@@ -661,7 +682,7 @@ fn handle_mouse(m: MouseEvent, state: &mut AppState) {
             let header_offset: u16 = 1;
             let rel = row.saturating_sub(table_rect.y + header_offset);
             let idx = rel as usize;
-            if idx < state.jobs.len() {
+            if idx < state.display_rows.len() {
                 state.selected = idx;
             }
         }

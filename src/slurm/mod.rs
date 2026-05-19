@@ -3,6 +3,7 @@
 //! Each submodule wraps a single Slurm CLI tool. Functions take an
 //! [`crate::ssh::Runner`] and return typed results.
 
+pub mod hostlist;
 pub mod model;
 pub mod parse;
 pub mod reason;

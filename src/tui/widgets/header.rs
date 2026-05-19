@@ -31,6 +31,7 @@ pub fn render(
     };
     let sort = format_sort(state.sort);
     let filter = format!("filter:{}", state.filter.label());
+    let group = format!("group:{}", state.group_by.label());
 
     let mut spans = vec![
         Span::styled("slurmdash", theme.header_style()),
@@ -44,6 +45,8 @@ pub fn render(
         Span::styled(status, Style::default().fg(theme.muted)),
         Span::raw("  "),
         Span::styled(sort, Style::default().fg(theme.muted)),
+        Span::raw("  "),
+        Span::styled(group, Style::default().fg(theme.muted)),
     ];
 
     // Live filter-input feedback, or the committed text filter.
