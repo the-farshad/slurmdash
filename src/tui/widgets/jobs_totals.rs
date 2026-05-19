@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -16,6 +16,17 @@ use crate::app::AppState;
 use crate::tui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
+    // Split into [totals line] + [horizontal rule]. The rule reads as
+    // the bottom edge of the totals band and visually separates it
+    // from the footer hints below, so "table → totals" feels grouped
+    // and the footer feels distinct.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+    let line_area = rows[0];
+    let rule_area = rows[1];
+
     let jobs = &state.jobs;
     let mut spans: Vec<Span<'_>> = Vec::new();
     let sep = || Span::styled("  ·  ", Style::default().fg(theme.border));
@@ -52,7 +63,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     }
 
     if jobs.is_empty() {
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        frame.render_widget(Paragraph::new(Line::from(spans)), line_area);
+        render_rule(frame, rule_area, theme);
         return;
     }
 
@@ -169,7 +181,20 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
         ));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), line_area);
+    render_rule(frame, rule_area, theme);
+}
+
+/// Render a full-width horizontal rule in the border color. Used as
+/// the bottom edge of the totals band, separating it from the footer
+/// commands underneath.
+fn render_rule(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    let w = area.width as usize;
+    let line = Line::from(Span::styled(
+        "─".repeat(w),
+        Style::default().fg(theme.border),
+    ));
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 fn humanize_mb(mb: u64) -> String {

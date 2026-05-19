@@ -393,11 +393,12 @@ fn draw(
                 table_rect = render_dashboard(frame, outer[1], state, theme);
             }
             View::Jobs => {
-                // Reserve a single row at the bottom for the totals
-                // strip; the table keeps the rest.
+                // Reserve two rows at the bottom for the totals strip
+                // (row 0 = aggregate line, row 1 = horizontal divider
+                // separating it from the footer). Table fills the rest.
                 let split = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .constraints([Constraint::Min(1), Constraint::Length(2)])
                     .split(outer[1]);
                 widgets::job_table::render(frame, split[0], state, theme);
                 widgets::jobs_totals::render(frame, split[1], state, theme);
@@ -517,7 +518,7 @@ fn render_dashboard(
     widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
     let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
         .split(chunks[3]);
     widgets::job_table::render(frame, split[0], state, theme);
     widgets::jobs_totals::render(frame, split[1], state, theme);
