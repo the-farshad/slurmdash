@@ -1,43 +1,20 @@
-//! Braille-fractional horizontal progress bars (btop aesthetic).
-//!
-//! Each Braille cell carries up to 8 sub-pixels of resolution, so a
-//! 10-cell bar represents 80 distinct fill levels — substantially
-//! smoother than the block (▰/▱) bars used in early phases. The empty
-//! side is a faint dot baseline so the bar's full extent stays
-//! visible even at 0% fill.
-
-/// 9-step fill ramp: empty, then 1..7 dots, then full. Picked so each
-/// step adds dots on the LEFT half first (matches L→R growth of the
-/// bar).
-const STEPS: [char; 9] = ['⠀', '⡀', '⡄', '⡆', '⡇', '⣇', '⣧', '⣷', '⣿'];
+//! Solid-Braille horizontal progress bars used by the History section
+//! of the job-details view. Two glyphs only: `⣿` for filled cells and
+//! `⣀` for the faint baseline track. No fractional / partial-fill
+//! intermediate glyphs — every cell is either fully on or fully off
+//! to match the dot aesthetic the user asked for verbatim.
 
 /// Build (filled, empty) strings that together span exactly `cells`
-/// terminal columns. The filled side ends with a partial-fill glyph
-/// when the percentage doesn't fall on an 8-dot boundary; the empty
-/// side renders a faint `⣀` baseline so the track stays visible at
-/// 0 %. Callers pick the colors when wrapping each in a Span.
+/// terminal columns. Cells round to whole `⣿` or `⣀` glyphs, so
+/// 50% of 10 cells is exactly `⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀`.
 pub fn bar_pair(pct: f64, cells: usize) -> (String, String) {
     let pct = pct.clamp(0.0, 1.0);
-    let total_dots = (pct * cells as f64 * 8.0).round() as usize;
-    let full_cells = total_dots / 8;
-    let remainder = total_dots % 8;
+    let full_cells = (pct * cells as f64).round() as usize;
+    let full_cells = full_cells.min(cells);
+    let empty_cells = cells - full_cells;
 
-    let mut filled = String::with_capacity(full_cells * 3 + 3);
-    for _ in 0..full_cells {
-        filled.push('⣿');
-    }
-    let partial = remainder > 0 && full_cells < cells;
-    if partial {
-        filled.push(STEPS[remainder]);
-    }
-
-    let used = full_cells + usize::from(partial);
-    let empty_cells = cells.saturating_sub(used);
-    let mut empty = String::with_capacity(empty_cells * 3);
-    for _ in 0..empty_cells {
-        empty.push('⣀');
-    }
-
+    let filled: String = "⣿".repeat(full_cells);
+    let empty: String = "⣀".repeat(empty_cells);
     (filled, empty)
 }
 
@@ -64,17 +41,17 @@ mod tests {
     #[test]
     fn half_pct_splits_in_middle() {
         let (f, e) = bar_pair(0.5, 10);
-        assert_eq!(f.chars().count() + e.chars().count(), 10);
         assert_eq!(f.chars().count(), 5);
+        assert_eq!(e.chars().count(), 5);
+        assert!(f.chars().all(|c| c == '⣿'));
+        assert!(e.chars().all(|c| c == '⣀'));
     }
 
     #[test]
-    fn fractional_pct_uses_partial_glyph() {
-        // 33% of 10 cells × 8 dots/cell = 26.4 dots → round to 26
-        // → 3 full cells + a 2-dot partial = 4 glyphs.
-        let (f, _) = bar_pair(0.33, 10);
-        assert_eq!(f.chars().count(), 4);
-        let last = f.chars().last().unwrap();
-        assert!(STEPS[1..8].contains(&last), "partial glyph, got {last:?}");
+    fn cells_never_overflow_total_width() {
+        // Even a value that rounds up to >cells stays clamped.
+        let (f, e) = bar_pair(1.5, 8);
+        assert_eq!(f.chars().count(), 8);
+        assert!(e.is_empty());
     }
 }
