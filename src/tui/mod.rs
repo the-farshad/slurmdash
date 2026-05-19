@@ -378,9 +378,7 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
                 state.assist = None;
             }
             KeyCode::Enter
-                if !dialog.in_flight
-                    && dialog.response.is_none()
-                    && !dialog.input.is_empty() =>
+                if !dialog.in_flight && dialog.response.is_none() && !dialog.input.is_empty() =>
             {
                 return Intent::AssistSubmit;
             }
