@@ -96,6 +96,27 @@ pub struct AppState {
     pub assist: Option<AssistDialog>,
 
     pub settings: SettingsState,
+
+    /// In-process web server state — populated once the user presses `w`
+    /// in the TUI to hot-start `slurmdash web` on a loopback port.
+    pub web: WebUiState,
+}
+
+/// State of an embedded web UI started from inside the TUI.
+#[derive(Debug, Default, Clone)]
+pub struct WebUiState {
+    /// `Some` once the listener is bound and the server task is running.
+    pub running: Option<WebUiInfo>,
+    pub starting: bool,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebUiInfo {
+    pub url: String,
+    pub token: String,
+    pub addr: String,
+    pub readonly: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

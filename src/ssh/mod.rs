@@ -69,6 +69,7 @@ pub trait Runner: Send + Sync {
     fn description(&self) -> String;
 }
 
+#[derive(Clone)]
 pub struct RunnerHandle {
     pub runner: Arc<dyn Runner>,
     pub cluster_name: String,

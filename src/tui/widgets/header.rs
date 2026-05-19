@@ -38,6 +38,11 @@ pub fn render(
     let group = format!("group:{}", state.group_by.label());
 
     let mut spans = vec![
+        // ▌ + `>_` is a stylized terminal-prompt mark — instantly tells the
+        // viewer this is a CLI/TUI surface and not a web page screenshot.
+        Span::styled("▌", Style::default().fg(theme.accent)),
+        Span::styled(">_", theme.header_style()),
+        Span::raw(" "),
         Span::styled("slurmdash", theme.header_style()),
         Span::raw("  "),
         Span::styled(cluster_label.to_string(), Style::default().fg(theme.accent)),

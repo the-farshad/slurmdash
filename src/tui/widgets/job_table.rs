@@ -67,14 +67,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     // Width 1 ribbon col leads; each row paints a single block in the row's
     // state color to give a vertical state-coloured stripe down the table.
     // ELAPSED widens to 14 to fit an inline progress bar (6 cells) + space +
-    // up to a 6-char duration text ("99h59m"). ST widens to 5 for "glyph + short".
+    // up to a 6-char duration text ("99h59m"). ST is 7 to fit
+    // `glyph + 2 spaces + 3-char short` (worst case `✘  OOM`).
     let widths = [
         Constraint::Length(1),
         Constraint::Length(10),
         Constraint::Length(10),
         Constraint::Length(20),
         Constraint::Length(10),
-        Constraint::Length(5),
+        Constraint::Length(7),
         Constraint::Length(14),
         Constraint::Length(8),
         Constraint::Length(6),
@@ -214,12 +215,12 @@ fn render_group_row<'a>(
 
 fn render_job_row<'a>(j: &'a Job, theme: &Theme, indent: bool, terms: &[String]) -> Row<'a> {
     let state_style = theme.job_state_style(&j.state);
-    // Compact ST cell: glyph + short label, e.g. `▶ R`, `◷ PD`. The glyph
-    // is in state color/bold; the short label follows in the same style so
-    // existing scripts/screenshots that look for "R"/"PD" still work.
+    // Compact ST cell: glyph + short label, e.g. `▶  R`, `◷  PD`. Two
+    // spaces between the glyph and the label so the two don't visually
+    // crowd in terminals that render ▶ / ◷ as ambiguous-width.
     let state_cell = Cell::from(Line::from(vec![
         Span::styled(state_glyph(&j.state), state_style),
-        Span::raw(" "),
+        Span::raw("  "),
         Span::styled(j.state.short().to_string(), state_style),
     ]));
 

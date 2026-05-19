@@ -83,7 +83,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
 
 // ---- per-view hint sets ----------------------------------------------------
 
-const JOBS_HINTS: [Hint; 17] = [
+const JOBS_HINTS: [Hint; 19] = [
     Hint {
         key: "1·2·3",
         label: "view",
@@ -155,6 +155,16 @@ const JOBS_HINTS: [Hint; 17] = [
         kind: HintKind::Special,
     },
     Hint {
+        key: "w",
+        label: "web UI",
+        kind: HintKind::Special,
+    },
+    Hint {
+        key: ",",
+        label: "settings",
+        kind: HintKind::Normal,
+    },
+    Hint {
         key: "T",
         label: "theme",
         kind: HintKind::Normal,
@@ -171,10 +181,15 @@ const JOBS_HINTS: [Hint; 17] = [
     },
 ];
 
-const SETTINGS_HINTS: [Hint; 4] = [
+const SETTINGS_HINTS: [Hint; 5] = [
     Hint {
         key: "t",
         label: "test LLM",
+        kind: HintKind::Special,
+    },
+    Hint {
+        key: "w",
+        label: "start web UI",
         kind: HintKind::Special,
     },
     Hint {

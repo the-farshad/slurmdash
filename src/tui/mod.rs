@@ -249,6 +249,9 @@ async fn run_loop(
                     Intent::SettingsTest => {
                         run_settings_test(&mut state, config).await;
                     }
+                    Intent::WebStart => {
+                        run_web_start(&mut state, cli, config, handle, db).await;
+                    }
                 }
                 if state.should_quit { break; }
             }
@@ -447,6 +450,8 @@ enum Intent {
     ThemeChanged,
     /// User pressed `t` in Settings — probe the configured LLM.
     SettingsTest,
+    /// User pressed `w` — start the embedded web UI in the background.
+    WebStart,
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
@@ -585,6 +590,18 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
         }
         KeyCode::Char(',') => {
             state.view = View::Settings;
+            return Intent::None;
+        }
+        // `w` — embedded web UI. From any non-input view, switch focus to
+        // Settings (where the URL is shown) and, if not already running,
+        // hot-start the server in the background.
+        KeyCode::Char('w') => {
+            state.view = View::Settings;
+            if state.web.running.is_none() && !state.web.starting {
+                state.web.starting = true;
+                state.web.last_error = None;
+                return Intent::WebStart;
+            }
             return Intent::None;
         }
         _ => {}
@@ -972,6 +989,56 @@ fn handle_loop_msg(
         LoopMsg::Partitions(Err(e)) => {
             state.refresh.sinfo_in_flight = false;
             tracing::warn!(error = %e, "sinfo refresh failed");
+        }
+    }
+}
+
+/// Start the embedded web UI listener in-process. Triggered by `w` in
+/// the TUI. On success, writes the bound URL+token into `state.web` so
+/// the Settings view can render them; on failure, records the error
+/// message instead of crashing the TUI. The server task itself runs for
+/// the rest of the process — there's no way to stop it from the TUI
+/// short of quitting.
+async fn run_web_start(
+    state: &mut AppState,
+    cli: &Cli,
+    config: &Config,
+    handle: &RunnerHandle,
+    db: Option<&Db>,
+) {
+    state.web.starting = false;
+    let opts = match crate::web::WebOptions::from_cli(None, None, false, true) {
+        Ok(o) => o,
+        Err(e) => {
+            state.web.last_error = Some(format!("{e}"));
+            return;
+        }
+    };
+    let refresh_secs = cli.refresh.unwrap_or(config.ui.refresh_seconds).max(1);
+    let result = crate::web::spawn(
+        config.clone(),
+        handle.clone(),
+        db.cloned(),
+        opts,
+        refresh_secs,
+    )
+    .await;
+    match result {
+        Ok(h) => {
+            let url = format!("http://{}/?token={}", h.addr, h.token);
+            state.web.running = Some(crate::app::WebUiInfo {
+                url,
+                token: h.token,
+                addr: h.addr.to_string(),
+                readonly: false,
+            });
+            state.web.last_error = None;
+            // Dropping the JoinHandle detaches the task; the axum server
+            // keeps running in the background until the process exits.
+            drop(h.task);
+        }
+        Err(e) => {
+            state.web.last_error = Some(format!("{e}"));
         }
     }
 }

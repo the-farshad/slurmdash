@@ -26,9 +26,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
             Constraint::Length(5), // LLM rows
             Constraint::Length(1), // section title: Theme
             Constraint::Length(2), // theme + cycle hint
-            Constraint::Length(1), // separator
+            Constraint::Length(1), // section title: Web UI
+            Constraint::Length(5), // web UI status rows
             Constraint::Length(1), // section title: Test
-            Constraint::Min(6),    // test result area
+            Constraint::Min(4),    // test result area
         ])
         .split(inner);
 
@@ -93,9 +94,69 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     ];
     frame.render_widget(Paragraph::new(theme_lines), chunks[3]);
 
-    // Separator handled by the empty chunk[4].
+    // ---- Web UI section ------------------------------------------------
+    frame.render_widget(Paragraph::new(header(" Web UI")), chunks[4]);
+    let web_lines: Vec<Line> = if let Some(info) = &state.web.running {
+        vec![
+            kv("status", "running".into(), theme.usage_low),
+            kv("url", info.url.clone(), theme.accent),
+            kv("listen", info.addr.clone(), theme.fg),
+            kv(
+                "mode",
+                if info.readonly {
+                    "readonly".into()
+                } else {
+                    "read/write".into()
+                },
+                theme.fg,
+            ),
+            Line::from(Span::styled(
+                "    copy the url above into a browser to access the dashboard",
+                Style::default().fg(theme.muted),
+            )),
+        ]
+    } else if state.web.starting {
+        vec![Line::from(Span::styled(
+            "    binding loopback port…",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))]
+    } else if let Some(err) = &state.web.last_error {
+        vec![
+            Line::from(Span::styled(
+                "    ✘ failed to start",
+                Style::default()
+                    .fg(theme.action_danger)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!("    {err}"),
+                Style::default().fg(theme.action_danger),
+            )),
+            Line::from(Span::styled(
+                "    (port may already be in use — press w again to retry)",
+                Style::default().fg(theme.muted),
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(Span::styled(
+                "    not running — press w to start on a loopback port",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "    (or run `slurmdash --host <alias> web --port 8080` in another shell)",
+                Style::default().fg(theme.muted),
+            )),
+        ]
+    };
+    frame.render_widget(
+        Paragraph::new(web_lines).wrap(Wrap { trim: false }),
+        chunks[5],
+    );
 
-    frame.render_widget(Paragraph::new(header(" Test")), chunks[5]);
+    frame.render_widget(Paragraph::new(header(" Test")), chunks[6]);
     let mut test_lines: Vec<Line> = Vec::new();
     if state.settings.test_in_flight {
         test_lines.push(Line::from(Span::styled(
@@ -136,6 +197,6 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme
     }
     frame.render_widget(
         Paragraph::new(test_lines).wrap(Wrap { trim: false }),
-        chunks[6],
+        chunks[7],
     );
 }
