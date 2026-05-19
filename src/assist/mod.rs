@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::slurm::model::{Job, JobDetails, Partition};
+use crate::slurm::state::JobState;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct AssistRequest {
@@ -104,7 +106,7 @@ pub(crate) fn system_prompt(req: &AssistRequest) -> String {
         }
     }
     if !req.jobs_snapshot.is_empty() {
-        s.push_str(&format!("Jobs visible: {}\n", req.jobs_snapshot.len()));
+        push_jobs_summary(&mut s, &req.jobs_snapshot);
     }
     if let Some(ctx) = &req.job_context {
         s.push_str(&format!("Selected job: {}\n", ctx.job_id));
@@ -127,6 +129,99 @@ pub(crate) fn system_prompt(req: &AssistRequest) -> String {
         }
     }
     s
+}
+
+/// Append a compact but informative jobs summary to the system prompt:
+/// total count, per-state breakdown, top-5 longest-running, top-3
+/// pending with reasons, and top-5 users by job count. Keeps the prompt
+/// inside small-model context windows by capping each list.
+fn push_jobs_summary(s: &mut String, jobs: &[Job]) {
+    s.push_str(&format!("\nJobs visible: {} total\n", jobs.len()));
+
+    // Per-state counts. BTreeMap keeps the order stable for the model.
+    let mut by_state: BTreeMap<&str, u32> = BTreeMap::new();
+    for j in jobs {
+        *by_state.entry(j.state.short()).or_insert(0) += 1;
+    }
+    if !by_state.is_empty() {
+        let parts: Vec<String> = by_state
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        s.push_str(&format!("  by state: {}\n", parts.join(", ")));
+    }
+
+    // Top-5 running, by elapsed.
+    let mut running: Vec<&Job> = jobs
+        .iter()
+        .filter(|j| j.state == JobState::Running)
+        .collect();
+    running.sort_by_key(|j| std::cmp::Reverse(j.elapsed_seconds.unwrap_or(0)));
+    if !running.is_empty() {
+        s.push_str("  longest-running:\n");
+        for j in running.iter().take(5) {
+            let elapsed = j
+                .elapsed_seconds
+                .map(short_dur)
+                .unwrap_or_else(|| "?".into());
+            let limit = j
+                .time_limit_seconds
+                .map(short_dur)
+                .unwrap_or_else(|| "?".into());
+            let gpu = if j.uses_gpu() {
+                format!(", {} gpu", j.gpus())
+            } else {
+                String::new()
+            };
+            s.push_str(&format!(
+                "    {} {} on {} ({}/{}{}) — {}\n",
+                j.job_id, j.user, j.partition, elapsed, limit, gpu, j.name,
+            ));
+        }
+    }
+
+    // Top-3 pending with reasons.
+    let pending: Vec<&Job> = jobs
+        .iter()
+        .filter(|j| j.state == JobState::Pending)
+        .collect();
+    if !pending.is_empty() {
+        s.push_str(&format!("  pending: {}\n", pending.len()));
+        for j in pending.iter().take(3) {
+            s.push_str(&format!(
+                "    {} {} on {} — reason: {}\n",
+                j.job_id, j.user, j.partition, j.reason_or_nodelist,
+            ));
+        }
+    }
+
+    // Top-5 users by job count.
+    let mut users: BTreeMap<&str, u32> = BTreeMap::new();
+    for j in jobs {
+        *users.entry(j.user.as_str()).or_insert(0) += 1;
+    }
+    let mut user_counts: Vec<(&&str, &u32)> = users.iter().collect();
+    user_counts.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+    if user_counts.len() > 1 {
+        let summary: Vec<String> = user_counts
+            .iter()
+            .take(5)
+            .map(|(u, c)| format!("{u}={c}"))
+            .collect();
+        s.push_str(&format!("  top users: {}\n", summary.join(", ")));
+    }
+}
+
+fn short_dur(s: u64) -> String {
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 86_400 {
+        format!("{}h{}m", s / 3600, (s % 3600) / 60)
+    } else {
+        format!("{}d", s / 86_400)
+    }
 }
 
 /// Pull `scancel N` / `scontrol hold N` / `sbatch <<EOF…EOF` style snippets

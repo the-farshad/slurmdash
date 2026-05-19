@@ -70,6 +70,8 @@ enum LoopMsg {
     Partitions(Result<Vec<crate::slurm::model::Partition>>),
     /// LLM probe-test response from the Settings `t` key.
     AssistTest(Result<crate::assist::AssistResponse>),
+    /// Response for the Ctrl+K assist dialog.
+    AssistComplete(Result<crate::assist::AssistResponse>),
 }
 
 async fn run_loop(
@@ -267,7 +269,34 @@ async fn run_loop(
                         }
                     }
                     Intent::AssistSubmit => {
-                        run_assist(runner, &handle.cluster_name, &mut state, config).await;
+                        // Build the request now (we need to copy the
+                        // current jobs/partitions snapshot anyway) and
+                        // spawn the LLM call so the dialog can animate
+                        // its spinner while waiting.
+                        if let Some(dialog) = state.assist.as_mut() {
+                            let prompt = std::mem::take(&mut dialog.input);
+                            dialog.in_flight = true;
+                            dialog.error = None;
+                            dialog.response = None;
+                            let job_context = state.selected_job().map(|j| JobContext {
+                                job_id: j.job_id.clone(),
+                                details: state.details.clone(),
+                            });
+                            let req = AssistRequest {
+                                prompt,
+                                job_context,
+                                cluster_name: handle.cluster_name.clone(),
+                                jobs_snapshot: state.jobs.clone(),
+                                partitions: state.partitions.clone(),
+                                history_summary: None,
+                            };
+                            let tx2 = tx.clone();
+                            let cfg = config.clone();
+                            tokio::spawn(async move {
+                                let result = crate::assist::assist(req, &cfg).await;
+                                let _ = tx2.send(LoopMsg::AssistComplete(result)).await;
+                            });
+                        }
                     }
                     Intent::AssistRun(idx) => {
                         run_assisted_command(&mut state, idx);
@@ -404,7 +433,7 @@ fn draw(
             widgets::confirm::render(frame, frame.area(), confirm, theme);
         }
         if let Some(dialog) = &state.assist {
-            widgets::assist::render(frame, frame.area(), dialog, theme);
+            widgets::assist::render(frame, frame.area(), dialog, theme, state.frame);
         }
     })?;
     Ok(table_rect)
@@ -545,14 +574,25 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
                 state.assist = None;
             }
             KeyCode::Enter
-                if !dialog.in_flight && dialog.response.is_none() && !dialog.input.is_empty() =>
+                if !dialog.in_flight && !dialog.input.is_empty() =>
             {
+                // Allow follow-up prompts: previously we required
+                // `dialog.response.is_none()` which silently dropped
+                // every Enter after the first round-trip.
                 return Intent::AssistSubmit;
             }
             KeyCode::Backspace => {
                 dialog.input.pop();
             }
-            KeyCode::Char(c) if c.is_ascii_digit() && dialog.response.is_some() => {
+            // `y` while the prompt input is empty and a response is
+            // visible: yank the response text to the system clipboard
+            // via OSC 52 (supported by most modern terminals).
+            KeyCode::Char('y') if dialog.input.is_empty() && dialog.response.is_some() => {
+                if let Some(r) = &dialog.response {
+                    copy_to_clipboard(&r.text);
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() && dialog.response.is_some() && dialog.input.is_empty() => {
                 let idx = (c as u8 - b'0') as usize;
                 if (1..=9).contains(&idx) {
                     return Intent::AssistRun(idx - 1);
@@ -1121,6 +1161,21 @@ fn handle_loop_msg(
                 }
             }
         }
+        LoopMsg::AssistComplete(result) => {
+            if let Some(dialog) = state.assist.as_mut() {
+                dialog.in_flight = false;
+                match result {
+                    Ok(r) => {
+                        dialog.response = Some(r);
+                        dialog.error = None;
+                    }
+                    Err(e) => {
+                        dialog.error = Some(format!("{e}"));
+                        dialog.response = None;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1209,43 +1264,52 @@ async fn save_llm_config(llm: &crate::app::LlmConfig, db: Option<&Db>) {
     }
 }
 
-async fn run_assist(
-    _runner: &dyn Runner,
-    cluster_name: &str,
-    state: &mut AppState,
-    config: &Config,
-) {
-    let Some(dialog) = state.assist.as_mut() else {
-        return;
-    };
-    let prompt = std::mem::take(&mut dialog.input);
-    dialog.in_flight = true;
+/// Push `text` to the user's system clipboard via the OSC 52 escape
+/// sequence. The terminal sees an `\x1b]52;c;<base64>\x07` packet and
+/// — if it supports OSC 52 — writes the decoded bytes to the system
+/// clipboard. Supported terminals include iTerm2, kitty, wezterm,
+/// alacritty (with the right config), foot, and many remote `tmux`
+/// setups; GNOME Terminal currently does NOT support this, so the
+/// best-effort write is silent on those.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let b64 = base64_encode(text.as_bytes());
+    let mut stdout = std::io::stdout().lock();
+    // BEL-terminated form (\x07) — most widely supported terminator.
+    let _ = write!(stdout, "\x1b]52;c;{b64}\x07");
+    let _ = stdout.flush();
+}
 
-    // Compose context. Selected job (if any) gets richer details.
-    let job_context = state.selected_job().map(|j| JobContext {
-        job_id: j.job_id.clone(),
-        details: state.details.clone(),
-    });
-    let req = AssistRequest {
-        prompt,
-        job_context,
-        cluster_name: cluster_name.to_string(),
-        jobs_snapshot: state.jobs.clone(),
-        partitions: state.partitions.clone(),
-        // TUI Phase 5: history not yet threaded through the event loop —
-        // the recommendations panel in the details view is the primary
-        // surface. CLI and web both pass history_summary already.
-        history_summary: None,
-    };
-
-    let result = crate::assist::assist(req, config).await;
-    if let Some(dialog) = state.assist.as_mut() {
-        dialog.in_flight = false;
-        match result {
-            Ok(r) => dialog.response = Some(r),
-            Err(e) => dialog.error = Some(format!("{e}")),
-        }
+/// Minimal standard-alphabet Base64 encoder. Pulled inline to avoid
+/// adding a dependency just for the clipboard path.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHA: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
+        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        out.push(ALPHA[(n & 0x3f) as usize] as char);
+        i += 3;
     }
+    let rem = bytes.len() - i;
+    if rem == 1 {
+        let n = (bytes[i] as u32) << 16;
+        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8);
+        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        out.push('=');
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
