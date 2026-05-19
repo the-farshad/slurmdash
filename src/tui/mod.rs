@@ -306,6 +306,9 @@ fn draw(
                 widgets::job_table::render(frame, outer[1], state, theme);
                 table_rect = Some(outer[1]);
             }
+            View::Statistics => {
+                render_statistics(frame, outer[1], state, theme);
+            }
             View::Details => {
                 widgets::details::render(frame, outer[1], state, theme);
             }
@@ -341,6 +344,33 @@ fn draw(
         }
     })?;
     Ok(table_rect)
+}
+
+/// Full-page statistics view: cluster overview + queue trend + wait
+/// histogram + top users + partition cards.
+fn render_statistics(frame: &mut ratatui::Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
+    let part_rows = (state.partitions.len() as u16 + 2).clamp(3, 12);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),         // sparkline trend strip
+            Constraint::Length(7),         // resources (left) + wait histogram (right)
+            Constraint::Length(part_rows), // partitions
+            Constraint::Min(6),            // top users (full)
+        ])
+        .split(area);
+
+    widgets::sparkline::render(frame, chunks[0], &state.resource_history, theme);
+
+    let row2 = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[1]);
+    widgets::resources::render(frame, row2[0], &state.resources, theme);
+    widgets::wait_distribution::render(frame, row2[1], &state.all_jobs, theme);
+
+    widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
+    widgets::top_users::render(frame, chunks[3], &state.all_jobs, theme);
 }
 
 /// Three-stack dashboard: top row (resources + queue + ending-soon),
@@ -541,13 +571,17 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
             state.view = View::Jobs;
             return Intent::None;
         }
+        KeyCode::Char('3') => {
+            state.view = View::Statistics;
+            return Intent::None;
+        }
         _ => {}
     }
 
     match state.view {
         View::Details => handle_key_details(key, state),
         View::Logs => handle_key_logs(key, state),
-        View::Dashboard | View::Jobs => handle_key_jobs(key, state),
+        View::Dashboard | View::Jobs | View::Statistics => handle_key_jobs(key, state),
     }
 }
 

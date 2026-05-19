@@ -15,3 +15,5 @@ pub mod progress;
 pub mod queue;
 pub mod resources;
 pub mod sparkline;
+pub mod top_users;
+pub mod wait_distribution;

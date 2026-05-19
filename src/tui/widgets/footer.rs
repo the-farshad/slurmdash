@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
     }
 
     let hints: &[Hint] = match state.view {
-        View::Dashboard | View::Jobs => &JOBS_HINTS,
+        View::Dashboard | View::Jobs | View::Statistics => &JOBS_HINTS,
         View::Details => &DETAILS_HINTS,
         View::Logs => &LOGS_HINTS,
     };
@@ -84,7 +84,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, state: &AppState
 
 const JOBS_HINTS: [Hint; 17] = [
     Hint {
-        key: "1·2",
+        key: "1·2·3",
         label: "view",
         kind: HintKind::Normal,
     },

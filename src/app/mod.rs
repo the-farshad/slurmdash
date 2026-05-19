@@ -190,6 +190,9 @@ pub enum View {
     #[default]
     Dashboard,
     Jobs,
+    /// Full-width statistics page: cluster overview + queue trends + wait
+    /// histogram + top users + top partitions.
+    Statistics,
     Details,
     Logs,
 }

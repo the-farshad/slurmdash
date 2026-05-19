@@ -48,7 +48,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         Line::raw(""),
         Line::raw("Other"),
         Line::raw("  R r        refresh now"),
-        Line::raw("  1 / 2      dashboard / jobs view"),
+        Line::raw("  1 / 2 / 3  dashboard / jobs / statistics"),
         Line::raw("  ?          this help"),
         Line::raw("  q          quit"),
         Line::raw("  Ctrl+C     quit immediately"),
