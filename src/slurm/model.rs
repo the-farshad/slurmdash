@@ -59,7 +59,7 @@ impl Partition {
 }
 
 /// Cluster-wide totals computed from a slice of [`Partition`]s.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ClusterResources {
     pub nodes: Aiot,
     pub cpus: Aiot,
@@ -67,7 +67,7 @@ pub struct ClusterResources {
     pub gpus: Aiot,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct AiotU64 {
     pub allocated: u64,
     pub idle: u64,

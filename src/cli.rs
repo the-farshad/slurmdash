@@ -192,11 +192,21 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         Some(Command::Hold { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Hold).await,
         Some(Command::Release { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Release).await,
         Some(Command::Requeue { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Requeue).await,
+        Some(Command::Web {
+            host,
+            port,
+            readonly,
+            no_open_browser,
+        }) => {
+            let handle = crate::ssh::build_runner(&cli, &config).await?;
+            let opts =
+                crate::web::WebOptions::from_cli(host, port, readonly, no_open_browser)?;
+            crate::web::run(cli, config, handle, db, opts).await
+        }
         Some(Command::Logs { .. })
         | Some(Command::Submit { .. })
         | Some(Command::History { .. })
-        | Some(Command::Trends)
-        | Some(Command::Web { .. }) => {
+        | Some(Command::Trends) => {
             anyhow::bail!("not yet implemented in Phase 1 MVP")
         }
 

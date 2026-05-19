@@ -7,6 +7,7 @@ pub mod error;
 pub mod slurm;
 pub mod ssh;
 pub mod tui;
+pub mod web;
 
 use anyhow::Result;
 use clap::Parser;

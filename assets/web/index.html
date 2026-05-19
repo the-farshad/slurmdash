@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>slurmdash</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="brand">slurmdash</span>
+      <span id="cluster" class="cluster">—</span>
+      <span id="status" class="muted">connecting…</span>
+      <span id="readonly" class="badge readonly" hidden>readonly</span>
+    </header>
+
+    <main>
+      <section class="row">
+        <div class="card" id="resources-card">
+          <h2>Resources</h2>
+          <div id="resources"></div>
+        </div>
+        <div class="card" id="queue-card">
+          <h2>Queue</h2>
+          <div id="queue"></div>
+        </div>
+        <div class="card" id="ending-card">
+          <h2>Ending soon</h2>
+          <div id="ending"></div>
+        </div>
+      </section>
+
+      <section class="card wide">
+        <h2>Partitions</h2>
+        <div id="partitions"></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Jobs</h2>
+        <table id="jobs">
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Part</th>
+              <th>Name</th>
+              <th>User</th>
+              <th>State</th>
+              <th>Elapsed</th>
+              <th>Limit</th>
+              <th>Nodes</th>
+              <th>Reason</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <div id="modal" class="modal" hidden>
+      <div class="modal-body">
+        <h3 id="modal-title">Confirm</h3>
+        <pre id="modal-cmd"></pre>
+        <div class="modal-buttons">
+          <button id="modal-cancel">Cancel</button>
+          <button id="modal-ok" class="danger">Run</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="bar muted">
+      auto-refresh every <span id="refresh-seconds">5</span>s ·
+      keys: <kbd>r</kbd> refresh now · <kbd>Esc</kbd> close modal
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
