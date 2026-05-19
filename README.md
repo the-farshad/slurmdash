@@ -2,46 +2,194 @@
 
 > Terminal user interface for the Slurm workload manager.
 
-`slurmdash` is a terminal dashboard for monitoring and managing Slurm jobs on
-remote HPC clusters. It runs on the user's machine, reaches the cluster over
-an ordinary SSH connection, and invokes standard Slurm CLI commands. No
-software is required on the cluster beyond what Slurm already installs.
+`slurmdash` runs on your laptop and gives you a live dashboard for the
+clusters you SSH into — job table, resource bars, log tailing, safe
+cancel/hold/release, a built-in LLM assistant, and an optional local web
+UI. No software is required on the cluster beyond what Slurm itself
+already installs.
+
+- **Version:** 0.1.0 — see [CHANGELOG.md](CHANGELOG.md)
+- **Source:** [github.com/the-farshad/slurmdash](https://github.com/the-farshad/slurmdash)
+- **License:** GPL-3.0
+
+Not to be confused with Slurm upstream's own `sview` (GTK admin GUI from
+SchedMD). `slurmdash` is a separate Rust project; the name was chosen to
+avoid that collision.
 
 ---
 
-## Status
+## Tour
 
-Initial release: **v0.1.0** (see [CHANGELOG.md](CHANGELOG.md)). All five
-phases listed in the roadmap below are implemented in this release.
+The block-character panels below are real renderings of what each view
+looks like. PNG captures from live terminals can be dropped into
+[`docs/screenshots/`](docs/screenshots/) when you take them.
 
-Note: Slurm upstream ships an unrelated GTK admin GUI also called `sview` in
-`slurm-gui` / `slurm-sview` system packages. `slurmdash` is a separate Rust
-project with no relation to it; the name was chosen to avoid the collision.
+### Dashboard (default view)
 
-## Overview
+```text
+┌ slurmdash  frontier  42 jobs  updated 14:23:01  sort:state↑ ──────────────────────┐
+│                                                                                    │
+│ ┌ History (last 60 samples) ──────────────────────────────────────────────────┐    │
+│ │ CPU  ▁▂▃▄▅▆▇█▇▆▆▅▅▄▄▃▃▂▂  67%   GPU  ▄▄▅▅▆▆▇█  82%   MEM  ▁▁▂▂▃▃▄▄  56%  │    │
+│ └─────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                    │
+│ ┌ Resources ──────────┐ ┌ Queue ──────────┐ ┌ Ending soon ─────────────────────┐  │
+│ │ CPU  [████████░░] 67% │ │ R   ████████ 12 │ │ 12345 train         -02:15      │  │
+│ │ GPU  [█████████░] 82% │ │ PD  █████    5  │ │ 12346 inference     -08:42      │  │
+│ │ MEM  [██████░░░░] 56% │ │ CD  ██       2  │ │ 12350 preprocess    -22:18      │  │
+│ │ NODE alloc:12 idle:4  │ │ F   █        1  │ │                                 │  │
+│ └───────────────────────┘ └─────────────────┘ └─────────────────────────────────┘  │
+│                                                                                    │
+│ ┌ Partitions ───────────────────────────────────────────────────────────────────┐  │
+│ │ gpu-a100   cpu ████████░ 80%  gpu ██████░░ 60%  mem ████░░░░ 40%  12/16 nodes │  │
+│ │ gpu-h100   cpu ███████░░ 75%  gpu █████████ 90%  mem ███████░ 70%  8/8  nodes │  │
+│ │ cpu        cpu ███░░░░░░ 34%  mem ███░░░░░░ 30%                   4/12 nodes │  │
+│ └───────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                    │
+│ ┌ JOBID    PART      NAME           USER     ST  ELAPSED   LIMIT     N  REASON  ┐  │
+│ │ 12345    gpu-a100  train_resnet50 alice    R   02:15:00  04:00:00  2  nid001  │  │
+│ │ 12346    gpu-h100  inference      bob      R   08:42:00  12:00:00  1  nid002  │  │
+│ │ 12347    cpu       preprocess     alice    PD  --        02:00:00  1  Priority│  │
+│ │ 12348    gpu-a100  finetune       carol    PD  --        06:00:00  4  Resources│ │
+│ └───────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                    │
+│ 1 dash  2 jobs  ↑↓ select  Enter details  l logs  c cancel  ^K assist  ? help  q  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-`slurmdash` runs on the user's machine rather than on the cluster login node.
-It does not require `slurmrestd`, custom daemons, or any cluster-side install.
+### Job details (Enter / d)
 
-- Configuration, themes, and saved cluster profiles are stored locally.
-- Commands are issued as `squeue`, `scontrol`, `sacct`, `sinfo`, `scancel`,
-  `sbatch`, `sstat`, and `tail`, executed over SSH on the login node.
-- Named cluster profiles can be switched without restarting.
-- A local SQLite database caches recent command output and stores job and
-  resource snapshots for history and charts.
-- An optional local web UI (`slurmdash web`) exposes the same dashboard on a
-  loopback port for browser-based access.
-- Destructive commands (`scancel`, `scontrol hold`, `scontrol release`,
-  `scontrol requeue`) show the exact remote command and require confirmation.
-  Each call is recorded in a local audit log.
-- SSH private keys, passwords, and full logs are not stored. The local
-  database can be disabled, encrypted, or wiped.
+```text
+┌ slurmdash  frontier  42 jobs ─────────────────────────────────────────────────────┐
+│                                                                                    │
+│ Time   [████████████░░░░░░░░] 52%  02:15:00 / 04:00:00                            │
+│                                                                                    │
+│  Job 12345                                                                         │
+│                                                                                    │
+│    Name        train_resnet50                                                      │
+│    User        alice                                                               │
+│    Account     ml-lab                                                              │
+│    Partition   gpu-a100                                                            │
+│    State       RUNNING                                                             │
+│    Command     /home/alice/run.sh                                                  │
+│    WorkDir     /home/alice/exps/resnet50-run-12                                    │
+│    StdOut      /home/alice/exps/resnet50-run-12/slurm-12345.out                    │
+│    StdErr      /home/alice/exps/resnet50-run-12/slurm-12345.err                    │
+│    NodeList    nid001                                                              │
+│                                                                                    │
+│  History                                                                           │
+│    train_resnet50: 12 runs, median elapsed 2h14m, max 3h47m                        │
+│    suggest --time at least 3h59m (median 2h14m / max 3h47m)                        │
+│                                                                                    │
+│ Esc back   q quit                                                                  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-## Installation
+A pending job replaces the progress bar with a `Reason` line — for
+example `Reason  Priority — Other jobs currently have higher
+scheduling priority.`
 
-Requires Rust 1.85+ (2024 edition) and the system `ssh` binary on `$PATH`.
+### Log viewer (l for stdout, e for stderr)
 
-From source (recommended until a release is published to crates.io):
+```text
+┌ log  stdout  /home/alice/exps/resnet50-run-12/slurm-12345.out  FOLLOW  3812 lines ─┐
+│                                                                                    │
+│   Epoch  9/40   loss 1.243   acc 0.612   lr 0.0010   eta 1:47:00                  │
+│   Epoch 10/40   loss 1.187   acc 0.628   lr 0.0010   eta 1:36:21                  │
+│   Epoch 11/40   loss 1.132   acc 0.641   lr 0.0009   eta 1:25:55                  │
+│   [val] step 50  loss 1.094  acc 0.659                                            │
+│   Epoch 12/40   loss 1.078   acc 0.658   lr 0.0009   eta 1:15:32                  │
+│ ▌ Epoch 13/40   loss 1.025   acc 0.674   lr 0.0008   eta 1:05:14                  │
+│   …                                                                                │
+│                                                                                    │
+│ ↑↓ jk scroll  PgUp/PgDn page  g top  G bottom  f follow  / search  n next  Esc    │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+`/` opens a search buffer; matched substrings are highlighted in the
+accent color. Press `f` to pause autoscroll.
+
+### Confirm modal (c cancel, h hold, u release, Q requeue)
+
+```text
+                         ┌ Confirm ───────────────────────────┐
+                         │ cancel job 12345                   │
+                         │                                    │
+                         │ $ scancel 12345                    │
+                         │                                    │
+                         │ Enter / y to confirm    Esc / n    │
+                         └────────────────────────────────────┘
+```
+
+Every destructive remote command goes through this prompt, regardless of
+whether it was triggered from a hotkey, the LLM assistant, or the web UI.
+Each call is recorded in `command_audit_log`.
+
+### Assist (Ctrl+K) — defaults to local Ollama
+
+```text
+┌ Assist (Ctrl+K) ───────────────────────────────────────────────────────────────────┐
+│ ┌ prompt ────────────────────────────────────────────────────────────────────────┐ │
+│ │ my job 12347 is pending — what's the fastest fix?_                             │ │
+│ └────────────────────────────────────────────────────────────────────────────────┘ │
+│ ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│ │  [ollama · llama3.2]                                                           │ │
+│ │                                                                                │ │
+│ │  Reason=Priority means other jobs in this partition outrank yours. You can:    │ │
+│ │   - wait it out (your fairshare will recover)                                  │ │
+│ │   - try the cpu partition if your job doesn't actually need a GPU              │ │
+│ │   - hold and resubmit with a tighter --time so the scheduler can backfill      │ │
+│ │                                                                                │ │
+│ │   proposed commands (press 1-9 to confirm)                                     │ │
+│ │   1. scontrol hold 12347                                                       │ │
+│ └────────────────────────────────────────────────────────────────────────────────┘ │
+│ Enter send   1-9 confirm command   Esc close                                       │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Pressing `1` opens the standard Confirm modal with `scontrol hold 12347`
+as the preview. The LLM never runs commands directly — every action is
+gated on user confirmation and audit-logged.
+
+### Local web UI (`slurmdash web`)
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ slurmdash  frontier   updated 14:23:01                              [readonly]│
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌─ Resources ────────────┐ ┌─ Queue ──────────┐ ┌─ Ending soon ───────────┐  │
+│ │ CPU  ▰▰▰▰▰▰▱▱▱▱  67%   │ │ R   ▰▰▰▰▰▰▰▰ 12  │ │ 12345 train     -02:15 │  │
+│ │ GPU  ▰▰▰▰▰▰▰▰▰▱  82%   │ │ PD  ▰▰▰▰▰     5  │ │ 12346 inference -08:42 │  │
+│ │ MEM  ▰▰▰▰▰▰▱▱▱▱  56%   │ │ CD  ▰▰        2  │ │ …                       │  │
+│ └────────────────────────┘ └──────────────────┘ └─────────────────────────┘  │
+│                                                                              │
+│ ┌─ Partitions ──────────────────────────────────────────────────────────────┐│
+│ │ gpu-a100   cpu ▰▰▰▰▰▰▰▰▱▱ 80%  gpu ▰▰▰▰▰▰▱▱▱▱ 60%  mem ▰▰▰▰▱▱▱▱▱▱ 40% ││
+│ │ cpu        cpu ▰▰▰▱▱▱▱▱▱▱ 34%  mem ▰▰▰▱▱▱▱▱▱▱ 30%                       ││
+│ └────────────────────────────────────────────────────────────────────────────┘│
+│                                                                              │
+│ ┌─ Jobs ────────────────────────────────────────────────────────────────────┐│
+│ │ Job    Part      Name           User    State  Elapsed  Limit    Actions ││
+│ │ 12345  gpu-a100  train_resnet50 alice   R      2:15:00  4:00:00  cancel ││
+│ │ 12346  gpu-h100  inference      bob     R      8:42:00  12:00:00 cancel ││
+│ │ 12347  cpu       preprocess     alice   PD                       hold   ││
+│ └────────────────────────────────────────────────────────────────────────────┘│
+│ auto-refresh every 5s · keys: r refresh now · Ctrl+K assist · Esc close      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Same backend modules as the TUI. The browser polls `/api/dashboard`
+every five seconds and feeds the same audit-logged confirm flow when you
+click a destructive button.
+
+---
+
+## Install
+
+Requires Rust **1.85+** (2024 edition) and the system `ssh` binary on
+`$PATH`.
+
+From source — recommended until the crate is published:
 
 ```sh
 git clone https://github.com/the-farshad/slurmdash
@@ -49,330 +197,198 @@ cd slurmdash
 cargo install --path .
 ```
 
-Or, when `crates.io` publishing happens:
+Or grab the prebuilt Linux x86_64 binary from the
+[latest release](https://github.com/the-farshad/slurmdash/releases/latest).
+
+Future:
 
 ```sh
 cargo install slurmdash
 ```
 
-Prebuilt Linux binaries are attached to each tagged GitHub release.
-
 ## Quick start
 
 ```sh
-# Against a host already in ~/.ssh/config
+# 1. Talk to a host already in your ~/.ssh/config
 slurmdash --host login.cluster.edu --user alice
 
-# Or define a profile in ~/.config/slurmdash/config.toml and:
+# 2. Or define cluster profiles in ~/.config/slurmdash/config.toml
 slurmdash connect frontier
 
-# Browser dashboard on a loopback port
+# 3. Browser dashboard on a loopback port
 slurmdash web --port 8080
-```
 
-Keys: `Enter` job details, `l` / `e` tail stdout/stderr, `c` cancel,
-`Ctrl+K` open the assistant, `?` show all keys, `q` quit.
+# 4. CLI one-shots
+slurmdash cancel 12345
+slurmdash assist "why is my job pending?" --job 12347
+slurmdash recommend --job-name train_resnet50
+```
 
 ## Configuration
 
-`~/.config/slurmdash/config.toml`:
+Path: `~/.config/slurmdash/config.toml`. Minimal example:
 
 ```toml
 [ui]
-theme = "dark"
+theme = "dark"                 # dark | light | high-contrast | colorblind-safe
 refresh_seconds = 10
 mouse = true
-show_charts = true
-compact = false
 
 [database]
 enabled = true
-engine = "sqlite"                                  # sqlite | duckdb (later) | postgres (later)
-path = "~/.local/share/slurmdash/slurmdash.db"
-auto_migrate = true
 retention_days = 90
-cache_ttl_seconds = 30
-store_logs = false
-store_log_excerpts = true
-max_log_excerpt_lines = 300
-# encryption = "none"                              # none | os_keychain | passphrase | sqlcipher
 
 [clusters.frontier]
 host = "login.frontier.olcf.ornl.gov"
 user = "alice"
-port = 22
 ssh_key = "~/.ssh/id_ed25519"
-default_account = "project123"
 default_partition = "batch"
-default_workdir = "/home/alice"
+default_account = "project123"
 
-[clusters.lab_cluster]
-host = "login.lab.edu"
-user = "alice"
-default_partition = "cpu"
-
-# Skip SSH entirely — run Slurm commands locally. Useful when running
-# slurmdash on the login node itself, or for development.
 [clusters.local]
-local = true
+local = true                   # bypass SSH and run Slurm commands directly
 ```
 
-TOML is the source of truth for cluster profiles and base preferences (portable,
-version-controllable). Runtime-mutable UI state (last view, column widths,
-saved filters) lives in the local database.
+Cluster profiles are the source of truth for connection info;
+runtime-mutable UI state (column widths, last view) lives in the local
+database.
 
-## CLI reference
+## Keyboard reference
 
-```
-slurmdash                                       # open default cluster
-slurmdash --cluster NAME                        # named profile
-slurmdash --host H --user U [--port N] [--ssh-key PATH]
-slurmdash --config PATH
+| Key            | Where      | Action                                       |
+|----------------|------------|----------------------------------------------|
+| `1` / `2`      | global     | dashboard / plain jobs view                  |
+| `↑` / `↓` / `j` / `k` | jobs       | select previous / next job            |
+| `g` / `G`      | jobs/logs  | jump to top / bottom                         |
+| `Enter` / `d`  | jobs       | open job details                             |
+| `l` / `e`      | jobs       | open stdout / stderr log viewer              |
+| `c`            | jobs       | cancel selected (confirm modal)              |
+| `h` / `u` / `Q`| jobs       | hold / release / requeue (confirm modal)     |
+| `s` / `S`      | jobs       | cycle sort key / reverse                     |
+| `R` / `r`      | jobs/logs  | refresh now                                  |
+| `f`            | logs       | toggle follow                                |
+| `/`            | logs       | search; `n` next match                       |
+| `Esc`          | any modal  | close modal / back to dashboard              |
+| `Ctrl+K`       | global     | open assist (LLM)                            |
+| `1`–`9`        | assist     | confirm Nth proposed command                 |
+| `?`            | jobs/logs  | help overlay                                 |
+| `q` / `Ctrl+C` | global     | quit                                         |
 
-# Filters
-slurmdash --me | --all | --user U | --partition P | --account A
-slurmdash --state R,PD | --job ID | --name N | --gpu TYPE | --reason R
+Mouse: row click selects, wheel scrolls selection.
 
-# Display
-slurmdash --refresh SEC | --theme NAME | --compact | --no-mouse
-slurmdash --columns jobid,name,state,time_left,reason
-slurmdash --sort time_left | --group-by partition
-slurmdash --dashboard | --charts
+## CLI reference (subcommands)
 
-# Subcommands
-slurmdash logs JOBID [--stderr] [--follow] [--download]
+```text
+slurmdash                    # open the TUI
+slurmdash connect NAME       # open the TUI for a named cluster profile
+slurmdash logs JOBID [--stderr] [--follow]
 slurmdash cancel JOBID
 slurmdash hold JOBID
 slurmdash release JOBID
 slurmdash requeue JOBID
-slurmdash submit script.sh [--partition P --gres gpu:a100:1 ...]
-slurmdash web [--host H] [--port N] [--readonly] [--no-open-browser]
-
-# Local database
-slurmdash --db PATH | --no-db | --offline
-slurmdash db status
-slurmdash db migrate
-slurmdash db vacuum
-slurmdash db export --format json|csv
-slurmdash db clear-cache
-slurmdash db clear-history
-slurmdash db backup ~/slurmdash-backup.db
-
-# History (powered by local DB)
-slurmdash history                                # completed jobs
-slurmdash history --offline                      # without cluster connection
-slurmdash trends                                 # queue / resource trends over time
+slurmdash submit script.sh   # (reserved for the sbatch wizard, not yet implemented)
+slurmdash assist "PROMPT" [--job JOBID]
+slurmdash recommend [--job-name X] [--since-days N]
+slurmdash history            # (reserved)
+slurmdash trends             # (reserved)
+slurmdash web [--port N] [--host ADDR] [--readonly] [--no-open-browser]
+slurmdash db status | migrate | vacuum | backup PATH | clear-cache | clear-history
 ```
 
-## Keyboard reference
+Common flags: `--cluster NAME`, `--host`, `--user`, `--port`,
+`--ssh-key`, `--config PATH`, `--db PATH`, `--no-db`, `--offline`,
+`--me`/`--all`, `--partition P`, `--state R,PD`, `--refresh SEC`,
+`--theme NAME`.
 
-| Key            | Action                          |
-|----------------|---------------------------------|
-| `Tab` / `S-Tab`| next / previous panel           |
-| `1`–`5`        | dashboard / my jobs / all jobs / logs / resources |
-| `Enter`        | open selected job               |
-| `l` / `e`      | tail stdout / stderr            |
-| `d`            | job details                     |
-| `c`            | cancel (with confirmation)      |
-| `h` / `r`      | hold / requeue                  |
-| `s`            | submit batch script             |
-| `/`            | search and filter               |
-| `R`            | manual refresh                  |
-| `Ctrl+P`       | command palette                 |
-| `Ctrl+K`       | prompt assistant (Phase 4)      |
-| `?`            | help overlay                    |
-| `q`            | quit                            |
+## LLM assistant
 
-Mouse: click column headers to sort, click rows to select, double-click to open
-details, scroll tables/logs, click actions in the action bar.
+`Ctrl+K` in the TUI / browser, or `slurmdash assist "prompt"` on the CLI.
 
----
-
-## Roadmap
-
-### Phase 1 — MVP
-
-- SSH cluster profiles with `~/.ssh/config` honored
-- Live `squeue` table with colors by job state
-- Job details panel (parsed from `scontrol show job`)
-- Stdout/stderr tail viewer (`tail -f` over SSH, follow + pause + search)
-- Cancel / hold / release / requeue (confirm modal, exact command preview)
-- Progress bar for running jobs (elapsed vs time limit)
-- Sorting, filtering, search
-- Mouse support
-- Local SQLite DB: schema + migrations, snapshot writer, cache, settings KV, audit log
-- Available-resources table (initial `sinfo` view) and node links
-- Local-cluster shortcut (no SSH) for dev and login-node use
-
-### Phase 2 — Visual + resource dashboard
-
-- Resource dashboard: CPU / GPU / memory / node state bars
-- Partition + QoS overview cards
-- Terminal charts driven by stored snapshots: queue size over time, running vs
-  pending, GPU usage by partition, runtime histograms
-- Array job collapse / expand with progress
-- Pending-reason explainer (with fix suggestions)
-- Node view with running jobs per node
-- Running-jobs-ending-soon widget
-- History view (sacct + DB) with runtime / wait / efficiency charts
-- Export CSV / JSON; clear-cache / clear-history commands
-
-### Phase 3 — Local web UI
-
-- `slurmdash web --port 8080` serves the same dashboard in a browser
-- Token-based local auth, bound to `127.0.0.1` by default
-- WebSocket / SSE for live updates (job table, log tail, resource usage)
-- Web log viewer + clickable node links + web charts
-- Same backend modules as the TUI — the web UI is a thin layer over `slurm/`,
-  `ssh/`, and `db/`
-- Offline mode (read-only browse of cached data without a live connection)
-
-### Phase 4 — Prompt assistant (LLM)
-
-- Prompt box in terminal and web UI (`Ctrl+K`)
-- Generate sbatch scripts from natural-language descriptions
-- Generate filters and squeue queries
-- Explain pending reasons in context of cluster state
-- Explain failures (read logs, exit codes, accounting, suggest a fix)
-- Recommend resources / partitions based on local history
-- **Every generated command is shown in a preview modal and requires confirmation
-  before it touches the cluster.** Audit-logged.
-- API keys optional, stored encrypted (OS keychain by default). LLM interactions
-  not stored to DB by default.
-
-### Phase 5 — Smart automation
-
-- Automatic walltime suggestion from previous runs of the same job name
-- Automatic memory suggestion from previous `MaxRSS`
-- Automatic partition suggestion based on wait-time history
-- Automatic job-array generation from a template
-- Automatic failed-job diagnosis (cross-reference logs, audit, history)
-- Automatic requeue suggestion for transient failures
-- Warning: every automation surfaces a recommendation; nothing auto-submits
-  without explicit confirmation
-
-### Cross-cutting workflow features
-
-These are not their own phase — they land alongside the phases above:
-
-- Sbatch submission wizard (Phase 2/3)
-- Multi-cluster switcher in-UI (Phase 1/3)
-- Local desktop notifications (Phase 2)
-- Dependency graph view (Phase 3)
-- Saved filters (Phase 2)
-- Command palette (Phase 3)
-
----
-
-## Architecture
-
-Single Rust binary. Internal modules:
-
-```
-src/
-├── main.rs            entry, CLI parsing (clap)
-├── config/            TOML config + cluster profiles
-├── ssh/               session per cluster (openssh crate), tailing
-├── slurm/             squeue / scontrol / sacct / sinfo / sbatch wrappers
-│   ├── parse.rs       JSON-first with text fallback
-│   ├── state.rs       job-state enum, semantic colors
-│   └── reason.rs      pending-reason explainer
-├── db/                local SQLite (sqlx), migrations, cache, snapshots, audit
-│   ├── cache.rs       TTL-bounded cache wrapper around Slurm calls
-│   ├── snapshots.rs   job + resource snapshot writer
-│   ├── settings.rs    KV-backed runtime settings
-│   └── audit.rs       command_audit_log writer
-├── app/               app state, event loop, refresh policy
-├── tui/               ratatui widgets, theme, layout
-│   └── widgets/       job_table, job_details, log_viewer, progress, charts, …
-├── web/               (Phase 3) axum server, REST + WebSocket
-├── assist/            (Phase 4) LLM prompt assistant + command preview
-└── cli/               subcommands (logs, cancel, submit, web, db, history, …)
-
-migrations/             sqlx migration files (versioned SQL)
-```
-
-Design rules:
-
-- The `slurm/`, `ssh/`, and `db/` modules know nothing about the UI. The TUI,
-  the future web UI, and the LLM assistant consume them as a library.
-- Prefer `squeue --json` / `sacct --json` when the cluster's Slurm version
-  supports it; fall back to delimited text formats for older clusters.
-- One persistent SSH session per cluster (ControlMaster multiplexing via the
-  `openssh` crate). Commands ride over the existing TCP connection — no new
-  handshake per refresh.
-- Cache before the network. The `db/cache.rs` layer wraps every Slurm call:
-  short-TTL results (sinfo, partitions, QoS) are served from SQLite to avoid
-  hammering the controller. Live `squeue` always re-fetches but its result is
-  also written to `job_snapshots` for history.
-- Smart refresh: slower when idle, faster after state changes, paused when the
-  terminal loses focus, manual via `R`. Defaults to 10 s.
-- Every destructive action writes to `command_audit_log` before execution —
-  even dry runs.
+- **Default:** Ollama on `http://localhost:11434`. Override the model with
+  `OLLAMA_MODEL` (default `llama3.2`). `OLLAMA_HOST=host:port` also works
+  without an `http://` prefix.
+- **Opt-in:** Anthropic via `SLURMDASH_LLM_PROVIDER=anthropic` and
+  `ANTHROPIC_API_KEY` (default model `claude-sonnet-4-6`,
+  `ANTHROPIC_MODEL` to override).
+- The system prompt is seeded with the current cluster snapshot, the
+  selected-job context, and (when a DB is enabled) a one-line history
+  summary for the job's name.
+- Any command the model proposes is shown in the standard Confirm modal
+  before it runs and recorded in `command_audit_log`. The model never
+  executes commands directly.
 
 ## Local database
 
-`~/.local/share/slurmdash/slurmdash.db` (SQLite, WAL mode) stores:
+`~/.local/share/slurmdash/slurmdash.db` (SQLite, WAL mode). Tables:
 
-| Table                | What                                                    |
-|----------------------|---------------------------------------------------------|
-| `clusters`           | Mirror of TOML cluster profiles for FK references       |
-| `settings`           | KV store for runtime-mutable UI prefs                   |
-| `job_snapshots`      | Every job seen on each refresh — beats squeue retention |
-| `completed_jobs`     | sacct-mirrored finished jobs with efficiency stats      |
-| `resource_snapshots` | Partition/node state over time — powers trend charts    |
-| `node_inventory`     | Last-seen node metadata                                 |
-| `command_audit_log`  | Every destructive command we ran, with confirmation     |
-| `llm_interactions`   | Optional, off by default — prompts + previewed commands |
+| Table                | Purpose                                                |
+|----------------------|--------------------------------------------------------|
+| `clusters`           | FK target for snapshots and audit entries              |
+| `settings`           | KV store for runtime-mutable UI prefs                  |
+| `cache`              | TTL-bounded results of expensive Slurm calls           |
+| `job_snapshots`      | Every job seen on each refresh                         |
+| `resource_snapshots` | Per-partition snapshots from sinfo                     |
+| `command_audit_log`  | Every destructive command, with confirmation + result  |
 
-Privacy defaults:
+Defaults: 90-day job retention, 30-day resource retention, 180-day audit,
+10-minute cache TTL. Run `slurmdash db status` to inspect, `clear-cache`
+/ `clear-history` to wipe, `backup PATH` to copy.
 
-- Never stores SSH private keys, passwords, or environment variables
-- Stores only SSH key *paths*, not key contents
-- Full logs not stored — only excerpts (configurable, capped lines)
-- LLM prompts not stored unless explicitly opted in
-- Optional encryption via OS keychain, passphrase, or SQLCipher
-- `slurmdash db clear-cache` / `clear-history` / `--no-db` always available
-- `slurmdash db export` and `slurmdash db backup` for portability
+Privacy: SSH private keys, passwords, and full logs are never stored.
+The whole database can be disabled with `--no-db`.
 
-Retention defaults: job snapshots 90 d, resource snapshots 30 d, audit 180 d,
-cached command output 10 min, log excerpts 14 d. All tunable.
+## Architecture
 
-## Color and theming
+```text
+src/
+├── main.rs / lib.rs   entry, async runtime, tracing
+├── cli.rs             clap subcommands and dispatch
+├── config.rs          TOML config + cluster profiles
+├── ssh/               Runner trait + LocalRunner + RemoteRunner (openssh)
+├── slurm/             squeue / scontrol / sacct / sinfo / sbatch wrappers
+├── db/                sqlx + bundled migrations + snapshot/audit writers
+├── history/           deterministic recommendation analyzers
+├── actions.rs         confirm-modal-friendly destructive-action dispatcher
+├── assist/            Ollama (default) + Anthropic providers, prompt builder
+├── app/               app state, sorting, log view, assist dialog
+├── tui/               ratatui widgets (dashboard, details, logs, modals, …)
+├── web/               axum server, REST API, embedded HTML/CSS/JS
+└── error.rs
 
-Themes are first-class. Job state, resource usage, action severity, and
-progress bars share a small palette across both terminal and web UI.
-
-| Bucket            | Examples                          | Default color |
-|-------------------|-----------------------------------|---------------|
-| Running           | `RUNNING`                         | green         |
-| Pending           | `PENDING`                         | yellow        |
-| Completing        | `COMPLETING`                      | cyan          |
-| Completed         | `COMPLETED`                       | blue          |
-| Failed / timeout  | `FAILED`, `TIMEOUT`, `NODE_FAIL`  | red           |
-| Cancelled         | `CANCELLED`                       | magenta       |
-| Preempted         | `PREEMPTED`                       | orange        |
-| Held / suspended  | `HELD`, `SUSPENDED`               | purple / gray |
-
-Resource usage bars: green (0–49 %) → yellow (50–79 %) → orange (80–94 %) →
-red (95–100 %). Destructive actions are always red and always confirmed.
-
-Built-in themes: `dark` (default), `light`, `high-contrast`, `colorblind-safe`.
-Custom themes via `[colors.*]` blocks in `config.toml`.
-
----
-
-## Building
-
-```sh
-cargo build           # debug
-cargo build --release # release
-cargo test            # unit + parser tests
-cargo run -- --help   # see CLI
+migrations/             bundled SQL files
+assets/web/             embedded HTML / CSS / JS for the web UI
 ```
 
-Requires Rust 1.75+ (2024 edition) and the system `ssh` binary on `$PATH`
-(OpenSSH 6.7+ for ControlMaster multiplexing).
+The `slurm`, `ssh`, `db`, and `history` modules know nothing about the UI
+— the TUI, the web UI, and the LLM assistant are thin layers over the
+same core.
+
+## Status and roadmap
+
+Released versions and what's in them live in [CHANGELOG.md](CHANGELOG.md).
+
+Open follow-ups for 0.2.x:
+
+- `cargo publish` to crates.io
+- macOS / Windows binaries via CI cross-compile
+- Sacct mirror → richer history and MaxRSS-based memory suggestions
+- Web UI: SSE / WebSocket live updates, browser log viewer, per-job page
+- Sbatch submission wizard
+- Node-level view, array-job collapse, dependency graph
+
+## Building from source
+
+```sh
+cargo build              # debug
+cargo build --release    # release (used for distribution)
+cargo test               # 5 unit + 2 integration tests
+cargo run -- --help      # see the CLI
+cargo fmt --all          # rustfmt
+cargo clippy --all-targets --no-deps -- -D warnings
+```
+
+CI runs the same fmt / clippy / test triad on every push and PR; see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## License
 
