@@ -552,6 +552,53 @@ function matchesFilter(j, p) {
 
 // ---- Jobs table -----------------------------------------------------
 
+function renderJobsTotals(jobs, totalUnfiltered) {
+  const root = document.getElementById('jobs-totals');
+  if (!root) return;
+  // Always show the count + filter chip so a zero-result filter still
+  // produces feedback.
+  const parts = [];
+  parts.push(`<span class="label">Σ</span> <span class="value accent">${jobs.length} job${jobs.length === 1 ? '' : 's'}</span>`);
+  if (ui.filterText.trim().length > 0) {
+    parts.push('<span class="sep">·</span>');
+    parts.push(`<span class="label">filter</span> <span class="value accent">/${escape(ui.filterText.trim())}/</span> <span class="label">(${jobs.length} of ${totalUnfiltered})</span>`);
+  }
+  if (jobs.length === 0) {
+    root.innerHTML = parts.join(' ');
+    return;
+  }
+  // Aggregates over the filtered set.
+  const byState = {};
+  let nodes = 0, gpus = 0;
+  let memSum = 0, memN = 0;
+  let waitSum = 0, waitN = 0;
+  let limitMax = 0, elapsedTotal = 0;
+  for (const j of jobs) {
+    const k = stateShort(j.state);
+    byState[k] = (byState[k] || 0) + 1;
+    nodes += j.nodes || 0;
+    gpus += gpuCount(j.gres);
+    if (j.min_mem_mb != null) { memSum += j.min_mem_mb; memN++; }
+    const w = waitSeconds(j);
+    if (w != null) { waitSum += w; waitN++; }
+    if (j.time_limit_seconds) limitMax = Math.max(limitMax, j.time_limit_seconds);
+    if (j.elapsed_seconds) elapsedTotal += j.elapsed_seconds;
+  }
+  // State chips.
+  const chips = Object.entries(byState)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<span class="chip ${k}">${n}${k}</span>`)
+    .join(' ');
+  if (chips) parts.push('<span class="sep">·</span>', chips);
+  parts.push('<span class="sep">·</span>', `<span class="label">Σnodes</span> <span class="value">${nodes}</span>`);
+  if (gpus > 0) parts.push('<span class="sep">·</span>', `<span class="label">ΣGPUs</span> <span class="value green">${gpus}</span>`);
+  if (memN > 0) parts.push('<span class="sep">·</span>', `<span class="label">Σmem</span> <span class="value">${humanMb(memSum)}</span>`);
+  if (elapsedTotal > 0) parts.push('<span class="sep">·</span>', `<span class="label">Σelapsed</span> <span class="value green">${shortDur(elapsedTotal)}</span>`);
+  if (limitMax > 0) parts.push('<span class="sep">·</span>', `<span class="label">max limit</span> <span class="value">${shortDur(limitMax)}</span>`);
+  if (waitN > 0) parts.push('<span class="sep">·</span>', `<span class="label">avg wait</span> <span class="value warn">${shortDur(Math.round(waitSum / waitN))}</span>`);
+  root.innerHTML = parts.join(' ');
+}
+
 function compare(a, b, key) {
   switch (key) {
     case 'job_id': {
@@ -584,6 +631,7 @@ function renderJobs() {
     filtered.length === ui.jobs.length
       ? `${ui.jobs.length} jobs`
       : `${filtered.length} of ${ui.jobs.length} jobs`;
+  renderJobsTotals(filtered, ui.jobs.length);
 
   const tbody = document.querySelector('#jobs tbody');
   if (!filtered.length) {

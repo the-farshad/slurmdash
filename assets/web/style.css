@@ -240,6 +240,39 @@ table#jobs .row-actions { display: flex; gap: 4px; }
 .btn.warn   { color: var(--pending); border-color: var(--pending); }
 .btn.small { padding: 4px 10px; font-size: 11px; }
 
+/* Totals strip below the jobs table. ---------------------------------- */
+.jobs-totals {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  align-items: center;
+}
+.jobs-totals .sep { color: var(--border); }
+.jobs-totals .label { color: var(--muted); }
+.jobs-totals .value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.jobs-totals .value.accent { color: var(--accent); }
+.jobs-totals .value.warn { color: var(--pending); }
+.jobs-totals .value.green { color: var(--running); }
+.jobs-totals .chip {
+  font-weight: 700;
+}
+.jobs-totals .chip.R { color: var(--chart-running); }
+.jobs-totals .chip.PD { color: var(--chart-pending); }
+.jobs-totals .chip.CG { color: var(--chart-completing); }
+.jobs-totals .chip.CD { color: var(--chart-completed); }
+.jobs-totals .chip.H  { color: var(--chart-held); }
+.jobs-totals .chip.F,
+.jobs-totals .chip.TO,
+.jobs-totals .chip.NF,
+.jobs-totals .chip.BF,
+.jobs-totals .chip.DL,
+.jobs-totals .chip.OOM { color: var(--chart-failed); }
+.jobs-totals .chip.CA { color: var(--chart-cancelled); }
+
 /* Modal --------------------------------------------------------------- */
 .modal {
   position: fixed; inset: 0;

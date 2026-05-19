@@ -393,8 +393,15 @@ fn draw(
                 table_rect = render_dashboard(frame, outer[1], state, theme);
             }
             View::Jobs => {
-                widgets::job_table::render(frame, outer[1], state, theme);
-                table_rect = Some(outer[1]);
+                // Reserve a single row at the bottom for the totals
+                // strip; the table keeps the rest.
+                let split = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .split(outer[1]);
+                widgets::job_table::render(frame, split[0], state, theme);
+                widgets::jobs_totals::render(frame, split[1], state, theme);
+                table_rect = Some(split[0]);
             }
             View::Statistics => {
                 render_statistics(frame, outer[1], state, theme);
@@ -508,9 +515,14 @@ fn render_dashboard(
     widgets::ending_soon::render(frame, top[4], &state.jobs, theme);
 
     widgets::partitions::render(frame, chunks[2], &state.partitions, theme);
-    widgets::job_table::render(frame, chunks[3], state, theme);
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(chunks[3]);
+    widgets::job_table::render(frame, split[0], state, theme);
+    widgets::jobs_totals::render(frame, split[1], state, theme);
 
-    Some(chunks[3])
+    Some(split[0])
 }
 
 async fn recv_log_line(stream: Option<&mut LineStream>) -> Option<String> {
