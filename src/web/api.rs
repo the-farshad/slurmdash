@@ -8,9 +8,16 @@ use axum::http::{HeaderMap, StatusCode};
 use serde::Serialize;
 
 use crate::actions::ActionKind;
+use crate::assist::{AssistRequest, AssistResponse, JobContext};
 use crate::slurm::{model::JobDetails, scontrol};
 use crate::web::auth::{TokenQuery, require};
 use crate::web::state::{Snapshot, WebState};
+
+#[derive(serde::Deserialize)]
+pub struct AssistBody {
+    pub prompt: String,
+    pub job_id: Option<String>,
+}
 
 #[derive(Serialize)]
 pub struct DashboardResponse<'a> {
@@ -91,6 +98,40 @@ pub async fn requeue(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     run_action(s, h, q, id, ActionKind::Requeue).await
+}
+
+pub async fn assist(
+    state_in: State<Arc<WebState>>,
+    headers: HeaderMap,
+    query: Option<Query<TokenQuery>>,
+    Json(body): Json<AssistBody>,
+) -> Result<Json<AssistResponse>, (StatusCode, String)> {
+    let state =
+        require(state_in, headers, query).map_err(|s| (s, "unauthorized".to_string()))?;
+
+    // Selected-job context: fetch fresh details if requested.
+    let job_context = match body.job_id {
+        Some(id) => {
+            let details = scontrol::show(state.handle.runner.as_ref(), &id).await.ok();
+            Some(JobContext { job_id: id, details })
+        }
+        None => None,
+    };
+
+    let snap = state.snapshot.read().await;
+    let req = AssistRequest {
+        prompt: body.prompt,
+        job_context,
+        cluster_name: state.handle.cluster_name.clone(),
+        jobs_snapshot: snap.jobs.clone(),
+        partitions: snap.partitions.clone(),
+    };
+    drop(snap);
+
+    crate::assist::assist(req, &state.config)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("{e}")))
 }
 
 async fn run_action(

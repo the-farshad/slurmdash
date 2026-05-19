@@ -100,6 +100,7 @@ pub async fn run(
         .route("/api/jobs/:job_id/hold", post(api::hold))
         .route("/api/jobs/:job_id/release", post(api::release))
         .route("/api/jobs/:job_id/requeue", post(api::requeue))
+        .route("/api/assist", post(api::assist))
         .with_state(state.clone());
 
     let addr = SocketAddr::new(opts.host, opts.port);

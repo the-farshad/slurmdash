@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use chrono::{DateTime, Utc};
 
 use crate::actions::ActionKind;
+use crate::assist::AssistResponse;
 use crate::slurm::model::{ClusterResources, Job, JobDetails, Partition};
 
 /// Max samples retained for the in-memory sparkline history. At the default
@@ -35,6 +36,16 @@ pub struct AppState {
     pub log: Option<LogView>,
     /// While `Some`, the user is typing into the log search input.
     pub search_input: Option<String>,
+
+    pub assist: Option<AssistDialog>,
+}
+
+#[derive(Debug, Default)]
+pub struct AssistDialog {
+    pub input: String,
+    pub response: Option<AssistResponse>,
+    pub in_flight: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]

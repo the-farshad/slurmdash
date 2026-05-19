@@ -1,0 +1,170 @@
+//! LLM prompt assistant.
+//!
+//! Talks to a chat model (local Ollama by default, optional cloud providers)
+//! and turns the response into a [`AssistResponse`]: free-text plus zero or
+//! more [`ProposedCommand`]s. Each proposed command must be confirmed by the
+//! user through the existing confirm modal before it touches the cluster,
+//! and every execution is audit-logged the same way manual actions are.
+
+pub mod anthropic;
+pub mod ollama;
+pub mod provider;
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+use crate::config::Config;
+use crate::slurm::model::{Job, JobDetails, Partition};
+
+#[derive(Debug, Clone)]
+pub struct AssistRequest {
+    pub prompt: String,
+    pub job_context: Option<JobContext>,
+    pub cluster_name: String,
+    pub jobs_snapshot: Vec<Job>,
+    pub partitions: Vec<Partition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct JobContext {
+    pub job_id: String,
+    pub details: Option<JobDetails>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistResponse {
+    pub text: String,
+    /// Commands the model proposed. Each is rendered in a confirm modal
+    /// before execution.
+    pub commands: Vec<ProposedCommand>,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposedCommand {
+    pub kind: ProposedKind,
+    /// Exact text that will run if the user confirms.
+    pub preview: String,
+    /// One-line explanation shown next to the preview.
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ProposedKind {
+    /// `scancel <job_id>`
+    Cancel { job_id: String },
+    /// `scontrol hold <job_id>`
+    Hold { job_id: String },
+    /// `scontrol release <job_id>`
+    Release { job_id: String },
+    /// `scontrol requeue <job_id>`
+    Requeue { job_id: String },
+    /// `sbatch` from a generated script. Caller writes the script to disk
+    /// and submits it after confirmation.
+    Sbatch { script: String },
+    /// Free-form shell command. Only allowed for whitelisted Slurm tools
+    /// (squeue, sinfo, sacct, scontrol show); never executed automatically.
+    Shell { command: String },
+}
+
+/// Build the assist response by calling the configured provider.
+pub async fn assist(req: AssistRequest, config: &Config) -> Result<AssistResponse> {
+    let provider = provider::resolve(config)?;
+    provider.complete(&req).await
+}
+
+/// Default system prompt seeded with cluster context. Kept short so it
+/// fits in the context window of small local models.
+pub(crate) fn system_prompt(req: &AssistRequest) -> String {
+    let mut s = String::new();
+    s.push_str(
+        "You are slurmdash's assistant. The user is on an HPC cluster running Slurm. \
+         Answer concisely. When proposing actions, output a fenced code block \
+         with the exact command (e.g. `scancel 12345`, `scontrol hold 12345`) on a \
+         single line, and explain what it does in plain language. Never assume the \
+         action has run — the user will confirm it in a modal before execution.\n\n",
+    );
+    s.push_str(&format!("Cluster: {}\n", req.cluster_name));
+    if !req.partitions.is_empty() {
+        s.push_str("Partitions:\n");
+        for p in &req.partitions {
+            s.push_str(&format!(
+                "  {} — nodes alloc {}/{}, cpus alloc {}/{}",
+                p.name,
+                p.nodes.allocated,
+                p.nodes.total,
+                p.cpus.allocated,
+                p.cpus.total,
+            ));
+            if let Some(g) = p.gpus_per_node {
+                s.push_str(&format!(", gpus/node {g}"));
+            }
+            s.push('\n');
+        }
+    }
+    if !req.jobs_snapshot.is_empty() {
+        s.push_str(&format!("Jobs visible: {}\n", req.jobs_snapshot.len()));
+    }
+    if let Some(ctx) = &req.job_context {
+        s.push_str(&format!("Selected job: {}\n", ctx.job_id));
+        if let Some(d) = &ctx.details {
+            if let Some(state) = &d.state {
+                s.push_str(&format!("  state: {state}\n"));
+            }
+            if let Some(reason) = &d.reason {
+                s.push_str(&format!("  reason: {reason}\n"));
+            }
+            if let Some(workdir) = &d.workdir {
+                s.push_str(&format!("  workdir: {workdir}\n"));
+            }
+        }
+    }
+    s
+}
+
+/// Pull `scancel N` / `scontrol hold N` / `sbatch <<EOF…EOF` style snippets
+/// out of the model's free-text reply so we can build proposed commands.
+pub(crate) fn extract_commands(text: &str) -> Vec<ProposedCommand> {
+    let mut out = Vec::new();
+    let re = regex::Regex::new(r"(?m)^\s*(scancel|scontrol\s+(?:hold|release|requeue)|sbatch)\b[^\n]*$").unwrap();
+    for m in re.find_iter(text) {
+        let line = m.as_str().trim();
+        let kind = classify(line);
+        if let Some(k) = kind {
+            let preview = line.to_string();
+            out.push(ProposedCommand {
+                kind: k,
+                preview,
+                explanation: String::new(),
+            });
+        }
+    }
+    out
+}
+
+fn classify(line: &str) -> Option<ProposedKind> {
+    let mut it = line.split_whitespace();
+    let head = it.next()?;
+    match head {
+        "scancel" => {
+            let id = it.next()?.to_string();
+            Some(ProposedKind::Cancel { job_id: id })
+        }
+        "scontrol" => {
+            let sub = it.next()?;
+            let id = it.next()?.to_string();
+            match sub {
+                "hold" => Some(ProposedKind::Hold { job_id: id }),
+                "release" => Some(ProposedKind::Release { job_id: id }),
+                "requeue" => Some(ProposedKind::Requeue { job_id: id }),
+                _ => None,
+            }
+        }
+        "sbatch" => Some(ProposedKind::Sbatch {
+            script: line.to_string(),
+        }),
+        _ => None,
+    }
+}

@@ -1,3 +1,4 @@
+pub mod assist;
 pub mod confirm;
 pub mod details;
 pub mod ending_soon;

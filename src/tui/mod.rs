@@ -23,8 +23,9 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::actions::ActionKind;
 use crate::app::{
-    AppState, Confirm, LogKind, LogView, ResourceSample, View, apply_sort,
+    AppState, AssistDialog, Confirm, LogKind, LogView, ResourceSample, View, apply_sort,
 };
+use crate::assist::{AssistRequest, JobContext, ProposedKind};
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::db::{Db, snapshots};
@@ -179,6 +180,12 @@ async fn run_loop(
                             }
                         }
                     }
+                    Intent::AssistSubmit => {
+                        run_assist(runner, &handle.cluster_name, &mut state, config).await;
+                    }
+                    Intent::AssistRun(idx) => {
+                        run_assisted_command(runner, &handle, db, &mut state, &opts, &mut last_refresh, cluster_id, idx).await;
+                    }
                 }
                 if state.should_quit { break; }
             }
@@ -262,6 +269,9 @@ fn draw(
         if let Some(confirm) = &state.confirm {
             widgets::confirm::render(frame, frame.area(), confirm, theme);
         }
+        if let Some(dialog) = &state.assist {
+            widgets::assist::render(frame, frame.area(), dialog, theme);
+        }
         if let Some(err) = &state.last_error {
             widgets::error_banner::render(frame, frame.area(), err, theme);
         }
@@ -325,6 +335,10 @@ enum Intent {
     OpenLog(LogKind),
     CloseLog,
     ConfirmAction,
+    /// User pressed Enter in the assist dialog — fire the LLM call.
+    AssistSubmit,
+    /// User pressed 1-9 in the assist dialog — execute that proposed command.
+    AssistRun(usize),
 }
 
 fn handle_event(event: Event, state: &mut AppState) -> Intent {
@@ -342,6 +356,44 @@ fn handle_key(key: crossterm::event::KeyEvent, state: &mut AppState) -> Intent {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         state.should_quit = true;
         return Intent::Quit;
+    }
+
+    // Ctrl+K: open assist dialog from any non-input view.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('k')) {
+        if state.assist.is_none() && state.search_input.is_none() && state.confirm.is_none() {
+            state.assist = Some(AssistDialog::default());
+        }
+        return Intent::None;
+    }
+
+    // Assist dialog absorbs keys when open.
+    if let Some(dialog) = state.assist.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                state.assist = None;
+            }
+            KeyCode::Enter => {
+                if !dialog.in_flight && dialog.response.is_none() && !dialog.input.is_empty() {
+                    return Intent::AssistSubmit;
+                }
+            }
+            KeyCode::Backspace => {
+                dialog.input.pop();
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() && dialog.response.is_some() => {
+                let idx = (c as u8 - b'0') as usize;
+                if idx >= 1 && idx <= 9 {
+                    return Intent::AssistRun(idx - 1);
+                }
+            }
+            KeyCode::Char(c) => {
+                if !dialog.in_flight {
+                    dialog.input.push(c);
+                }
+            }
+            _ => {}
+        }
+        return Intent::None;
     }
 
     if let Some(buf) = state.search_input.as_mut() {
@@ -607,6 +659,85 @@ async fn fetch(
             state.last_error = Some(format!("{e}"));
         }
     }
+}
+
+async fn run_assist(
+    _runner: &dyn Runner,
+    cluster_name: &str,
+    state: &mut AppState,
+    config: &Config,
+) {
+    let Some(dialog) = state.assist.as_mut() else { return };
+    let prompt = std::mem::take(&mut dialog.input);
+    dialog.in_flight = true;
+
+    // Compose context. Selected job (if any) gets richer details.
+    let job_context = state.selected_job().map(|j| JobContext {
+        job_id: j.job_id.clone(),
+        details: state.details.clone(),
+    });
+    let req = AssistRequest {
+        prompt,
+        job_context,
+        cluster_name: cluster_name.to_string(),
+        jobs_snapshot: state.jobs.clone(),
+        partitions: state.partitions.clone(),
+    };
+
+    let result = crate::assist::assist(req, config).await;
+    if let Some(dialog) = state.assist.as_mut() {
+        dialog.in_flight = false;
+        match result {
+            Ok(r) => dialog.response = Some(r),
+            Err(e) => dialog.error = Some(format!("{e}")),
+        }
+    }
+}
+
+async fn run_assisted_command(
+    _runner: &dyn Runner,
+    _handle: &RunnerHandle,
+    _db: Option<&Db>,
+    state: &mut AppState,
+    _opts: &squeue::Options,
+    _last_refresh: &mut Option<chrono::DateTime<chrono::Utc>>,
+    _cluster_id: Option<i64>,
+    idx: usize,
+) {
+    let cmd_opt = state
+        .assist
+        .as_ref()
+        .and_then(|d| d.response.as_ref())
+        .and_then(|r| r.commands.get(idx).cloned());
+    let Some(cmd) = cmd_opt else { return };
+
+    let action_kind = match &cmd.kind {
+        ProposedKind::Cancel { .. } => Some(ActionKind::Cancel),
+        ProposedKind::Hold { .. } => Some(ActionKind::Hold),
+        ProposedKind::Release { .. } => Some(ActionKind::Release),
+        ProposedKind::Requeue { .. } => Some(ActionKind::Requeue),
+        ProposedKind::Sbatch { .. } | ProposedKind::Shell { .. } => None,
+    };
+    let job_id = match &cmd.kind {
+        ProposedKind::Cancel { job_id }
+        | ProposedKind::Hold { job_id }
+        | ProposedKind::Release { job_id }
+        | ProposedKind::Requeue { job_id } => Some(job_id.clone()),
+        _ => None,
+    };
+    let (Some(kind), Some(job_id)) = (action_kind, job_id) else {
+        state.last_error = Some("assisted sbatch/shell commands are not yet supported".to_string());
+        return;
+    };
+
+    // Close assist dialog and route through the normal confirm modal so the
+    // user gets the exact-command preview and a definitive y/n.
+    state.assist = None;
+    state.confirm = Some(Confirm {
+        kind,
+        job_id: job_id.clone(),
+        preview: cmd.preview.clone(),
+    });
 }
 
 async fn fetch_sinfo(

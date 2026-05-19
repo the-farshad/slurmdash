@@ -240,9 +240,101 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeModal();
-  if (e.key === 'r' && !e.metaKey && !e.ctrlKey) refresh();
+  if (e.key === 'Escape') {
+    closeModal();
+    closeAssist();
+  }
+  if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    openAssist();
+  }
+  // 'r' triggers refresh only when no text input is focused.
+  if (
+    e.key === 'r' &&
+    !e.metaKey && !e.ctrlKey &&
+    document.activeElement?.tagName !== 'INPUT'
+  ) refresh();
 });
+
+// ---- Assist modal -----------------------------------------------------
+
+function openAssist() {
+  document.getElementById('assist').hidden = false;
+  document.getElementById('assist-status').textContent = '';
+  document.getElementById('assist-response').textContent = '';
+  const input = document.getElementById('assist-input');
+  input.value = '';
+  input.focus();
+}
+function closeAssist() {
+  document.getElementById('assist').hidden = true;
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'assist-close') closeAssist();
+  if (e.target.id === 'assist-send') sendAssist();
+  if (e.target.matches('button[data-assist-cmd]')) {
+    const action = e.target.dataset.assistAction;
+    const job = e.target.dataset.assistJob;
+    closeAssist();
+    openModal(action, job);
+  }
+});
+document.getElementById('assist-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    sendAssist();
+  }
+});
+
+let selectedJobId = null; // Reserved for a future "selected row" indicator.
+
+async function sendAssist() {
+  const input = document.getElementById('assist-input');
+  const status = document.getElementById('assist-status');
+  const out = document.getElementById('assist-response');
+  const prompt = input.value.trim();
+  if (!prompt) return;
+  status.textContent = 'thinking…';
+  out.textContent = '';
+  try {
+    const body = JSON.stringify({ prompt, job_id: selectedJobId });
+    const r = await fetchJson('/api/assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    status.textContent = '';
+    renderAssistResponse(r);
+  } catch (err) {
+    status.textContent = '';
+    out.textContent = `error: ${err.message}`;
+  }
+}
+
+function renderAssistResponse(r) {
+  const out = document.getElementById('assist-response');
+  const head = `<div class="meta">[${escape(r.provider)} · ${escape(r.model)}]</div>`;
+  const body = `<div>${escape(r.text)}</div>`;
+  let cmds = '';
+  if (r.commands && r.commands.length) {
+    cmds = '<hr style="border-color:var(--border);margin:8px 0">';
+    for (const c of r.commands) {
+      const kind = c.kind?.type ?? '';
+      const job = c.kind?.job_id ?? '';
+      let action = '';
+      if (kind === 'Cancel') action = 'cancel';
+      else if (kind === 'Hold') action = 'hold';
+      else if (kind === 'Release') action = 'release';
+      else if (kind === 'Requeue') action = 'requeue';
+      const btn = (action && job)
+        ? `<button class="btn warn" data-assist-cmd data-assist-action="${action}" data-assist-job="${escape(job)}">confirm</button>`
+        : `<span class="muted">manual</span>`;
+      cmds += `<div class="cmd-row"><code>${escape(c.preview)}</code>${btn}</div>`;
+    }
+  }
+  out.innerHTML = head + body + cmds;
+}
 
 // ---- Main loop --------------------------------------------------------
 

@@ -165,4 +165,27 @@ table#jobs .row-actions { display: flex; gap: 4px; }
 }
 .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal-buttons .danger { color: var(--bg); background: var(--failed); border-color: var(--failed); }
+.modal-buttons .primary { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .modal-buttons button { background: var(--surface-2); border: 1px solid var(--border); color: var(--fg); padding: 6px 14px; font-family: inherit; cursor: pointer; border-radius: 4px; }
+
+.assist-body { min-width: 560px; max-width: 80vw; }
+#assist-input {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; font-family: inherit; font-size: 13px;
+  margin-bottom: 8px;
+}
+#assist-status { font-size: 12px; min-height: 16px; margin-bottom: 6px; }
+#assist-response {
+  white-space: pre-wrap;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px; min-height: 60px; max-height: 360px; overflow: auto;
+  font-size: 12px;
+}
+#assist-response .meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+#assist-response .cmd-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px;
+  padding: 4px 0; align-items: center;
+}
+#assist-response .cmd-row code { color: var(--accent); }

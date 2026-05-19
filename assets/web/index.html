@@ -68,9 +68,22 @@
       </div>
     </div>
 
+    <div id="assist" class="modal" hidden>
+      <div class="modal-body assist-body">
+        <h3>Assist <span class="muted">(Ctrl+K)</span></h3>
+        <input type="text" id="assist-input" placeholder="ask the assistant about the cluster…" autocomplete="off" />
+        <div id="assist-status" class="muted"></div>
+        <div id="assist-response"></div>
+        <div class="modal-buttons">
+          <button id="assist-close">Close</button>
+          <button id="assist-send" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+
     <footer class="bar muted">
       auto-refresh every <span id="refresh-seconds">5</span>s ·
-      keys: <kbd>r</kbd> refresh now · <kbd>Esc</kbd> close modal
+      keys: <kbd>r</kbd> refresh now · <kbd>Ctrl+K</kbd> assist · <kbd>Esc</kbd> close modal
     </footer>
 
     <script src="/app.js"></script>

@@ -8,8 +8,8 @@ use crate::tui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme, view: View) {
     let keys = match view {
-        View::Dashboard => "1 dash  2 jobs   ↑↓ select   Enter details   l logs   c cancel   h hold   u release   Q requeue   s sort   R refresh   ? help   q quit",
-        View::Jobs => "1 dash  2 jobs   ↑↓ select   Enter details   l logs   c cancel   h hold   u release   Q requeue   s sort   S reverse   R refresh   ? help   q quit",
+        View::Dashboard => "1 dash  2 jobs   ↑↓ select   Enter details   l logs   c cancel   h hold   u release   Q requeue   s sort   ^K assist   R refresh   ? help   q quit",
+        View::Jobs => "1 dash  2 jobs   ↑↓ select   Enter details   l logs   c cancel   h hold   u release   Q requeue   s sort   S reverse   ^K assist   R refresh   ? help   q quit",
         View::Details => "Esc back   q quit",
         View::Logs => "↑↓ jk scroll   PgUp/PgDn page   g top   G bottom   f follow   / search   n next   Esc back",
     };

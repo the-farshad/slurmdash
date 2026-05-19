@@ -130,6 +130,15 @@ pub enum Command {
         cmd: DbCommand,
     },
 
+    /// Ask the configured LLM provider for help
+    Assist {
+        /// The prompt to send
+        prompt: String,
+        /// Selected job id for additional context
+        #[arg(long)]
+        job: Option<String>,
+    },
+
     /// Local web UI (Phase 3 — not yet implemented)
     Web {
         #[arg(long)]
@@ -192,6 +201,9 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         Some(Command::Hold { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Hold).await,
         Some(Command::Release { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Release).await,
         Some(Command::Requeue { job_id }) => run_action(&cli, &config, db, &job_id, crate::actions::ActionKind::Requeue).await,
+        Some(Command::Assist { prompt, job }) => {
+            run_assist(&cli, &config, prompt, job).await
+        }
         Some(Command::Web {
             host,
             port,
@@ -225,6 +237,50 @@ async fn launch_tui(
 ) -> Result<()> {
     let handle = crate::ssh::build_runner(&cli, &config).await?;
     crate::tui::run(cli, config, handle, db).await
+}
+
+async fn run_assist(
+    cli: &Cli,
+    config: &crate::config::Config,
+    prompt: String,
+    job: Option<String>,
+) -> Result<()> {
+    let handle = crate::ssh::build_runner(cli, config).await?;
+    let runner = handle.runner.as_ref();
+
+    let jobs_snapshot = crate::slurm::squeue::list(
+        runner,
+        &crate::slurm::squeue::Options { me: false, ..Default::default() },
+    )
+    .await
+    .unwrap_or_default();
+    let partitions = crate::slurm::sinfo::list_partitions(runner).await.unwrap_or_default();
+
+    let job_context = match job {
+        Some(j) => {
+            let details = crate::slurm::scontrol::show(runner, &j).await.ok();
+            Some(crate::assist::JobContext { job_id: j, details })
+        }
+        None => None,
+    };
+
+    let req = crate::assist::AssistRequest {
+        prompt,
+        job_context,
+        cluster_name: handle.cluster_name.clone(),
+        jobs_snapshot,
+        partitions,
+    };
+    let resp = crate::assist::assist(req, config).await?;
+
+    println!("\n[{} · {}]\n{}\n", resp.provider, resp.model, resp.text);
+    if !resp.commands.is_empty() {
+        println!("Proposed commands (run with confirmation):");
+        for (i, cmd) in resp.commands.iter().enumerate() {
+            println!("  {}. {}", i + 1, cmd.preview);
+        }
+    }
+    Ok(())
 }
 
 async fn run_action(

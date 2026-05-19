@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod app;
+pub mod assist;
 pub mod cli;
 pub mod config;
 pub mod db;
